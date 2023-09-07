@@ -1,0 +1,3 @@
+create a config file
+put the destinations there
+load destinations
