@@ -1,0 +1,119 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'broadcast-algorithms'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=broadcast-algorithms",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "broadcast-algorithms",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'broadcast-algorithms'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=broadcast-algorithms",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "broadcast-algorithms",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'client'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=client",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "client",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'client'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=client",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "client",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'server'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=server",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "server",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'server'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=server",
+                    "--package=broadcast-algorithms"
+                ],
+                "filter": {
+                    "name": "server",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
