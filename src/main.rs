@@ -18,7 +18,9 @@ async fn main() -> Result<(),  Box<dyn std::error::Error>> {
     let _listen_handle = connection_listener(listener, socket_tx).await;
     println!("Listening socket ready");
 
-    loop {}
+    loop {
+        // Do join here and quit
+    }
 
 }
 
@@ -39,7 +41,18 @@ async fn event_listener(listener_tx: Sender<Lib>, mut rx: Receiver<Lib>) -> toki
                             let _handle = client_handler(client_listen, client_tx);
                         },
                         Lib::Data(str) => {
+                            // Handle long data
                             println!("Incoming Data: {}", str);
+                        },
+                        Lib::Conn(addr) => {
+                            if !client_map.contains_key(&addr) {
+                                let client_socket = TcpStream::connect(addr.to_string())
+                                    .await.expect("Failed to connect to the given address");
+                                let (client_listen, client_write) = client_socket.into_split();
+                                client_map.insert(addr, client_write);
+                                let client_tx = listener_tx.clone();
+                                let _handle = client_handler(client_listen, client_tx);
+                            }
                         }
                     }
                 },
@@ -48,6 +61,8 @@ async fn event_listener(listener_tx: Sender<Lib>, mut rx: Receiver<Lib>) -> toki
                     break;
                 },
             }
+        
+        
         }
     })
 }
@@ -79,8 +94,6 @@ async fn client_handler(mut client_listen: OwnedReadHalf, client_tx: Sender<Lib>
             }
         }
     })
-    
-
 }
 
 async fn connection_listener(listener: TcpListener, socket_tx: Sender<Lib>) -> tokio::task::JoinHandle<()> {
@@ -109,4 +122,5 @@ async fn connection_listener(listener: TcpListener, socket_tx: Sender<Lib>) -> t
 enum Lib {
     Recv(TcpStream, SocketAddr),
     Data(String),
+    Conn(SocketAddr),
 }

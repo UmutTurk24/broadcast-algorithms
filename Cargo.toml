@@ -6,5 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = {version = "1.32.0", features = ["full", "net"] }
-clap = "4.4.2"
+tokio = {version = "1.15", features = ["full", "net", "io-util", "io-std", "macros", "rt", "rt-multi-thread"] }
+libp2p = { version = "0.52.3", features = ["async-std", "cbor", "dns", "kad", "noise", "tokio", "macros", "request-response", "tcp", "websocket", "yamux"] }
+serde = { version = "1.0.188", features = ["derive"] }
+async-std = { version = "1.12", features = ["attributes"] }
+futures = "0.3.28"
+void = "1.0.2"
+either = "1.9"
+clap = { version = "4.4.4", features = ["derive"] }
+tokio-stream = "0.1.14"
