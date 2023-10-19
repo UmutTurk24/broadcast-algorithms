@@ -1,5 +1,5 @@
 [package]
-name = "broadcast-algorithms"
+name = "libp2p_server"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,5 +15,3 @@ void = "1.0.2"
 either = "1.9"
 clap = { version = "4.4.4", features = ["derive"] }
 tokio-stream = "0.1.14"
-libp2p_server = { path = "server/libp2p_server" }
-tcp_server = { path = "server/tcp_server" }

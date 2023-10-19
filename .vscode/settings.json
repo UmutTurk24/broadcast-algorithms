@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "/Users/umut/Github/broadcast-algorithms/server/libp2p_server/Cargo.toml",
+        "/Users/umut/Github/broadcast-algorithms/server/tcp_server/Cargo.toml",
+        "/Users/umut/Github/broadcast-algorithms/Cargo.toml"
+    ]
+}

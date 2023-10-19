@@ -1,0 +1,66 @@
+
+
+
+// #[allow(unused)]
+// #[tokio::main]
+// async fn main() -> Result<(), Box<dyn std::error::Error>> { 
+//     let opt = Opt::parse();
+
+//     let (mut client, mut events) = new_server(opt.secret_key_seed).await?;
+
+//     client
+//         .start_listening(opt.listen_address)
+//         .await
+//         .expect("Listening not to fail.");
+    
+//     loop {
+//         let mut buffer = String::new();
+//         let stdin = io::stdin();
+
+//         tokio::select! {
+//             res = stdin.read_line(&mut buffer) => {
+//                 match buffer.trim() {
+//                     "dial" => {
+//                         let peer_id = match opt.peer.iter().last() {
+//                             Some(Protocol::P2p(peer_id)) => peer_id,
+//                             _ => return Err("Expect peer multiaddr to contain peer ID.".into()),
+//                         };
+//                         client
+//                             .dial(peer_id, opt.peer.clone())
+//                             .await
+//                             .expect("Dial to succeed");
+//                     },
+//                     "send" => {
+//                         let peer_id = match opt.peer.iter().last() {
+//                             Some(Protocol::P2p(peer_id)) => peer_id,
+//                             _ => return Err("Expect peer multiaddr to contain peer ID.".into()),
+//                         };
+//                         let data = "CoolData".to_string().into_bytes();
+//                         client.send_data(peer_id, data).await.expect("Successfully sent data");
+//                     },
+//                     "broadcast" => {
+//                         let dialed_peers = client.get_peers().await;    
+//                         for peer in dialed_peers {
+//                             let data = "CoolData".to_string().into_bytes();
+//                             client.send_data(peer, data).await.expect("Successfully sent data");
+//                         }
+//                     },
+//                     _ => println!("Unknown command"),
+//                 }
+//             }
+
+//             event = events.recv() => {
+//                 match event {
+//                     Some(Event::InboundRequest { request, channel }) => {
+//                         println!("Received request: {:?}", request);
+//                         client.confirm_request( channel ).await;
+//                     }
+//                     None => return Ok(()),
+//                 }
+//             }
+//         }
+        
+//     }
+
+//     Ok(())
+// }
