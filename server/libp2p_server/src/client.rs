@@ -189,7 +189,6 @@ impl EventLoop {
                                 .pending_data_requests
                                 .remove(&request_id)
                                 .expect("Request to still be pending.")
-                                // .send(Ok("Noice".to_string().into_bytes()));
                                 .send(Ok(response.0));
                             println!("I just responded");
                         

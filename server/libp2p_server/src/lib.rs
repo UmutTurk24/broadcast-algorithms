@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 
 use libp2p::core::upgrade::Version;
-use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr,};
+use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr};
 use libp2p::swarm::SwarmBuilder;
 use libp2p::request_response::{self, ProtocolSupport};
 
