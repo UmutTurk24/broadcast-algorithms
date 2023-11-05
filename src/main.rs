@@ -1,23 +1,26 @@
-use libp2p_server::{Servers, UserEvent};
+
+use futures::prelude::*;
+use libp2p::core::upgrade::Version;
+use libp2p::{
+    identity, noise, ping,
+    swarm::{SwarmBuilder, SwarmEvent},
+    tcp, yamux, Multiaddr, PeerId, Transport,
+};
+
+use libp2p_server::{P2PServer};
+use std::error::Error;
+use std::time::Duration;
 
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> { 
-    // Initialize the servers
-    let mut servers = Servers::new();
 
+    let (client, event_receiver, peer_id) = 
+        P2PServer::initialize_server("/ip4/127.0.0.1/tcp/40820".to_string(), Some("./src/bootstrap-nodes.txt".to_string())).await?;
     
-    // Initialize and Connect the servers
-    servers.init_servers(5).await?;
-    servers.connect_servers().await?;
-    
+    loop{
 
-    // Test sending data to a peer
-    let sender = servers.sender.get(&1).unwrap();
-
-    loop {
-        // Sleep 2 seconds
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        sender.send(UserEvent::Broadcast(vec![1,2,3])).await.expect("Could not send data");
     }
+
 }
+

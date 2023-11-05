@@ -1,4 +1,7 @@
 
+use libp2p::kad::Kademlia;
+use libp2p::kad::KademliaEvent;
+use libp2p::kad::store::MemoryStore;
 use tokio_stream::StreamExt;
 use tokio::sync::oneshot;
 use tokio::sync::mpsc;
@@ -60,6 +63,19 @@ impl Client {
         one_receiver.await.expect("Receiver has not responded")
     }
 
+    pub async fn bootstrap_to(
+        &mut self,
+        peer_id: PeerId,
+        peer_addr: Multiaddr,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let (one_sender, one_receiver) = oneshot::channel();
+        self.sender
+            .send(Command::BootstrapTo {peer_id, peer_addr, one_sender })
+                .await
+                .expect("Failed to send dial command");
+        one_receiver.await.expect("Receiver has not responded")
+    }
+
     /// Send data to the given peer.
     ///
     /// # Arguments
@@ -94,7 +110,7 @@ impl Client {
     /// # Returns
     ///
     /// A `HashSet` of `PeerId`s representing the list of peers.
-    pub async fn get_peers(&mut self) -> HashSet<PeerId> {
+    pub async fn get_dialed_peers(&mut self) -> HashSet<PeerId> {
         let (one_sender, one_receiver) = oneshot::channel();
         self.sender
             .send(Command::GetPeers { one_sender })
@@ -126,7 +142,7 @@ pub struct EventLoop {
     swarm: Swarm<ComposedBehaviour>,
     command_receiver: mpsc::Receiver<Command>,
     event_sender: mpsc::Sender<Event>,
-    pending_data_requests: HashMap<RequestId, oneshot::Sender<Result<Vec<u8>, Box<dyn Error + Send>>>>,
+    pending_requests: HashMap<RequestId, oneshot::Sender<Result<Vec<u8>, Box<dyn Error + Send>>>>,
 }
 #[allow(unused)]
 impl EventLoop {
@@ -148,7 +164,7 @@ impl EventLoop {
             swarm, 
             command_receiver,
             event_sender,
-            pending_data_requests: Default::default(),
+            pending_requests: Default::default(),
         }
     }
 
@@ -177,41 +193,39 @@ impl EventLoop {
     /// * `event` - The `SwarmEvent` to handle.
     async fn handle_event(
         &mut self,
-        event: SwarmEvent<ComposedEvent, Void>,
+        event: SwarmEvent<ComposedEvent, either::Either<Void, std::io::Error>>,
     ) {
         match event {
             SwarmEvent::Behaviour(ComposedEvent::RequestResponse(
                 request_response::Event::Message {message, peer})) => { 
                     match message {
                         request_response::Message::Response { request_id, response } => {
-
+                            // Send the response to the pending request
                             let _ = self
-                                .pending_data_requests
+                                .pending_requests
                                 .remove(&request_id)
                                 .expect("Request to still be pending.")
                                 .send(Ok(response.0));
-                            println!("I just responded");
+
                         
                         }
                         request_response::Message::Request { request, channel, .. } => {
+                            // Send the request to the event sender
                             self.event_sender
                                 .send({ Event::InboundRequest { request: request.0, channel }})
                                 .await
-                                .expect("Oops, failed to make a request");
-                            println!("I made a request!");
+                                .expect("Failed to make a request");
                         }
                     }
             },
-            SwarmEvent::Behaviour(event) => { 
-                println!("Unknown behaviour event{:?} ", event);
+            SwarmEvent::Behaviour(ComposedEvent::Kademlia(
+                KademliaEvent::OutboundQueryProgressed { id, result, stats, step })) => {
+                    println!("Outbound query progressed: {:?}, {:?}, {:?}, {:?}", id, result, stats, step);
             },
-            SwarmEvent::Dialing { peer_id: Some(peer_id), .. } => 
-            {
-                println!("Successful dial to {}", peer_id)
-            },
-            SwarmEvent::IncomingConnection { .. } => {
-                // println!("Incoming connection!")
-            },
+            SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
+            SwarmEvent::Behaviour(event) => {println!("General event: {:?}", event);},
+            SwarmEvent::Dialing { peer_id: Some(peer_id), .. } => { },
+            SwarmEvent::IncomingConnection { .. } => {},
             SwarmEvent::IncomingConnectionError { .. } => {},
             SwarmEvent::ConnectionClosed { .. } => {},
             SwarmEvent::ConnectionEstablished { .. } => {},
@@ -239,16 +253,32 @@ impl EventLoop {
                 // println!("Listening on {:?}", addr);
                 one_sender.send(Ok(()));
             }
-            Command::Dial { peer_id, peer_addr, one_sender } => {               
+            Command::Dial { peer_id, peer_addr, one_sender } => {  
+                // Dial the peer              
                 let dial_result = self.swarm.dial(peer_addr.clone().with(Protocol::P2p(peer_id)));
-                dial_result.expect("Failed to dial");
+                if dial_result.is_err() {
+                    println!("Failed to dial {:?}", peer_addr);
+                }
+
+                // Add the dialed peer to the kademlia routing table
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, peer_addr.clone());
+
+                one_sender.send(Ok(()));
+            }
+            Command::BootstrapTo { peer_id, peer_addr, one_sender } => {               
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, peer_addr.clone());
+                
                 one_sender.send(Ok(()));
             }
             Command::SendData { data, peer_id, one_sender } => {
-
                 let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer_id, AuthenticatedRequest(data));
-                self.pending_data_requests.insert(request_id, one_sender);
-                
+                self.pending_requests.insert(request_id, one_sender);
             }
             Command::GetPeers { one_sender } => {
                 let peers = self.swarm.connected_peers();
@@ -266,6 +296,7 @@ impl EventLoop {
                     .send_response(channel, AuthenticatedResponse("Success".to_string().into_bytes()))
                     .expect("Responding to the request");
             }
+
         }
     }
 }
@@ -277,6 +308,11 @@ pub enum Command {
         one_sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
     },
     Dial {
+        peer_id: PeerId,
+        peer_addr: Multiaddr,
+        one_sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
+    },
+    BootstrapTo {
         peer_id: PeerId,
         peer_addr: Multiaddr,
         one_sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
@@ -311,17 +347,25 @@ pub async fn new_executor() -> TokioExecutor {
 #[behaviour(to_swarm = "ComposedEvent")]
 pub struct ComposedBehaviour {
     pub request_response: request_response::cbor::Behaviour<AuthenticatedRequest, AuthenticatedResponse>,
+    pub kademlia: Kademlia<MemoryStore>,
 }
 
 
 #[derive(Debug)]
 pub enum ComposedEvent {
     RequestResponse(request_response::Event<AuthenticatedRequest, AuthenticatedResponse>),
+    Kademlia(KademliaEvent),
 }
 
 impl From<request_response::Event<AuthenticatedRequest, AuthenticatedResponse>> for ComposedEvent {
     fn from(event: request_response::Event<AuthenticatedRequest, AuthenticatedResponse>) -> Self {
         ComposedEvent::RequestResponse(event)
+    }
+}
+
+impl From<KademliaEvent> for ComposedEvent {
+    fn from(event: KademliaEvent) -> Self {
+        ComposedEvent::Kademlia(event)
     }
 }
 

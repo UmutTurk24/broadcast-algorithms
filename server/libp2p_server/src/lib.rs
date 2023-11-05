@@ -2,19 +2,28 @@ use client::ComposedBehaviour;
 use client::EventLoop;
 use client::new_executor;
 
+use libp2p::identity::Keypair;
+use libp2p::kad::store::MemoryStore;
+use tokio::fs::File;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
+use tokio::io::AsyncWriteExt;
 
 use libp2p::core::upgrade::Version;
 use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr};
 use libp2p::swarm::SwarmBuilder;
 use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::kad::{Kademlia, KademliaConfig};
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::io::Cursor;
+
 
 mod client;
 use client::{Client, Event};
+
+pub const BOOT_STARTER: u32 = 1000;
 
 pub struct Servers {
     pub peer_list: HashMap<u32, (PeerId, Multiaddr)>,
@@ -45,7 +54,7 @@ impl Servers {
         for i in 0..number {
             let listening_address = create_listen_address(i as u32);
             let (client, event_receiver, peer_id) = 
-                P2PServer::initialize_server(i as u8,listening_address.clone()).await?;
+                P2PServer::initialize_server(listening_address.clone(), None).await?;
 
             // Create the channel for the user to send events to the server
             let (user_sender, user_receiver) = tokio::sync::mpsc::channel::<UserEvent>(100);
@@ -85,8 +94,8 @@ impl Servers {
         }
         Ok(())
     }
-
 }
+
 fn create_listen_address(number: u32) -> String {
     return format!("/ip4/127.0.0.1/tcp/{}", 40820 + number);
 }
@@ -105,6 +114,41 @@ fn define_peer_addr(peer_id: PeerId, peer_addr: String) -> Multiaddr {
     let peer_addr: Multiaddr = format!("{}/p2p/{}", peer_addr, peer_id.to_base58()).parse::<Multiaddr>().unwrap();
     return peer_addr;
 }
+
+
+pub async fn generate_keys(num: u32) -> Vec<Keypair> {
+
+    let mut file = File::create("boot_nodes.txt").await.unwrap();
+    let mut keys = Vec::new();
+    
+    for i in BOOT_STARTER..(BOOT_STARTER + num) {
+        let bytes = transform_u32_to_array_of_u8(i);
+
+        let local_key = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
+        let peer_id = PeerId::from(local_key.public()).to_string();
+        let mut buffer = Cursor::new(peer_id + "\n") ;
+
+        file.write_all_buf(&mut buffer).await.expect("Failed to write generated peer_id to file");
+        keys.push(local_key);
+    }
+
+    keys
+}
+
+pub fn transform_u32_to_array_of_u8(x:u32) -> [u8;32] {
+    let b1 : u8 = ((x >> 24) & 0xff) as u8;
+    let b2 : u8 = ((x >> 16) & 0xff) as u8;
+    let b3 : u8 = ((x >> 8) & 0xff) as u8;
+    let b4 : u8 = (x & 0xff) as u8;
+
+    let mut bytes = [0u8; 32];
+    bytes[0] = b1;
+    bytes[1] = b2;
+    bytes[2] = b3;
+    bytes[3] = b4;
+    return bytes
+}
+
 
 /// The behavior of the client receiver.
 ///
@@ -127,7 +171,7 @@ async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Recei
                             client.send_data(peer_id, data).await.expect("Successfully sent data");
                         },
                         Some(UserEvent::Broadcast(data)) => {
-                            let dialed_peers = client.get_peers().await; 
+                            let dialed_peers = client.get_dialed_peers().await; 
                             for peer in dialed_peers {
                                 client.send_data(peer, data.clone()).await.expect("Could not send data");
                             }
@@ -149,6 +193,7 @@ async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Recei
         }
     });
 }
+
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -175,25 +220,35 @@ pub struct P2PServer;
 /// Returns an error if there was a problem initializing the server.
 impl P2PServer {
     
-    pub async fn initialize_server(secret_key_seed: u8, listen_address: String) -> Result<(Client, Receiver<Event>, PeerId), Box<dyn Error>> {
+    pub async fn initialize_server(listen_address: String, bootstrap_nodes: Option<String>) -> Result<(Client, Receiver<Event>, PeerId), Box<dyn Error>> {
         // Generate a local keypair and peer ID from the secret key seed
-        let mut bytes = [0u8; 32];
-        bytes[0] = secret_key_seed;
-        let local_key = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
+
+        let local_key = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(local_key.public());
         
         // Create a new executor for the server
         let executor = new_executor().await;
 
-        // Create the behavior for the server
-        let self_behaviour = ComposedBehaviour {
-            request_response: request_response::cbor::Behaviour::new(
+        let request_response_behaviour = 
+            request_response::cbor::Behaviour::new(
                 [(
                     StreamProtocol::new("/message-exchange/1"),
                     ProtocolSupport::Full,
                 )],
                 request_response::Config::default(),
-            ),
+            );
+
+        let kademlia_behaviour = 
+            Kademlia::with_config(
+                peer_id, 
+                MemoryStore::new(peer_id), 
+                KademliaConfig::default()
+            );
+
+        // Create the behavior for the server
+        let self_behaviour = ComposedBehaviour {
+            request_response: request_response_behaviour,
+            kademlia: kademlia_behaviour,
         };
 
         // Create the transport for the server
@@ -221,6 +276,21 @@ impl P2PServer {
         // Start listening on the given address
         let addr: Multiaddr = listen_address.parse().expect("Failed to parse address");
         client.start_listening(addr).await.expect("Failed to start listening");
+
+        // If bootstrap nodes were provided, connect to them
+        if let Some(bootstrap_nodes) = bootstrap_nodes {
+            let file = tokio::fs::read_to_string(bootstrap_nodes).await.expect("Failed to read bootstrap nodes file");
+            let lines = file.lines();
+            for line in lines {
+                let parts: Vec<&str> = line.split(" ").collect();
+                let (peer_addr, peer_id) = (parts[0], parts[1]);
+                
+                client.bootstrap_to(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
+            }
+        }
+
+
+
         
         // Return the client, event receiver, and peer ID
         Ok((client, event_receiver, peer_id))
