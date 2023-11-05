@@ -1,6 +1,9 @@
 
+use libp2p::kad::GetClosestPeersError;
 use libp2p::kad::Kademlia;
 use libp2p::kad::KademliaEvent;
+use libp2p::kad::QueryId;
+use libp2p::kad::QueryResult;
 use libp2p::kad::store::MemoryStore;
 use tokio_stream::StreamExt;
 use tokio::sync::oneshot;
@@ -9,7 +12,7 @@ use tokio::macros::support::Future;
 use tokio::macros::support::Pin;
 
 use libp2p::multiaddr::Protocol;
-use libp2p::{PeerId, Multiaddr, Swarm};
+use libp2p::{PeerId, Multiaddr, Swarm, mdns, gossipsub};
 use libp2p::swarm::{NetworkBehaviour, Executor, SwarmEvent};
 use libp2p::request_response::{self, RequestId, ResponseChannel};
 use serde::{Deserialize, Serialize};
@@ -97,8 +100,8 @@ impl Client {
             .send(Command::SendData { data, peer_id, one_sender })
             .await
             .expect("Failed to send data");
-        let res = one_receiver.await.expect("Receiver has not responded to SendData command");
-        res
+        one_receiver.await.expect("Receiver has not responded to SendData command")
+
     }
     
     /// Get the list of peers.
@@ -113,10 +116,10 @@ impl Client {
     pub async fn get_dialed_peers(&mut self) -> HashSet<PeerId> {
         let (one_sender, one_receiver) = oneshot::channel();
         self.sender
-            .send(Command::GetPeers { one_sender })
+            .send(Command::GetDialedPeers { one_sender })
             .await
             .expect("Command receiver not to be dropped.");
-        one_receiver.await.expect("Receiver has not responded to GetPeers command")
+        one_receiver.await.expect("Receiver has not responded to GetDialedPeers command")
     }
 
     /// Confirm a request.
@@ -135,6 +138,23 @@ impl Client {
             .expect("Could not respond");
     }
 
+
+    /// Get the list of peers closest to the given key.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `self` - The `Client` to get the list of peers from.
+    /// * `key` - The key to get the list of peers closest to.
+
+    pub async fn get_closest_peers(&mut self, key: Vec<u8>) -> HashSet<PeerId> {
+        let (one_sender, one_receiver) = oneshot::channel();
+        self.sender
+            .send(Command::GetClosestPeers { key, one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+        one_receiver.await.expect("Receiver has not responded to GetClosestPeers command")
+    }
+
 }
 
 /// A struct representing the event loop for a libp2p client.
@@ -143,6 +163,7 @@ pub struct EventLoop {
     command_receiver: mpsc::Receiver<Command>,
     event_sender: mpsc::Sender<Event>,
     pending_requests: HashMap<RequestId, oneshot::Sender<Result<Vec<u8>, Box<dyn Error + Send>>>>,
+    pending_behaviour_requests: HashMap<QueryId, oneshot::Sender<HashSet<PeerId>>>,
 }
 #[allow(unused)]
 impl EventLoop {
@@ -165,6 +186,7 @@ impl EventLoop {
             command_receiver,
             event_sender,
             pending_requests: Default::default(),
+            pending_behaviour_requests: Default::default(),
         }
     }
 
@@ -193,9 +215,15 @@ impl EventLoop {
     /// * `event` - The `SwarmEvent` to handle.
     async fn handle_event(
         &mut self,
-        event: SwarmEvent<ComposedEvent, either::Either<Void, std::io::Error>>,
+        event: SwarmEvent<ComposedEvent, either::Either<either::Either<either::Either<Void, std::io::Error>, Void>, Void>>,
     ) {
         match event {
+            /// Handling Composed Event Behaviours
+            /// 
+            /// 
+            /// ComposedEvent::RequestResponse
+            /// Message::Response
+            /// Message::Request
             SwarmEvent::Behaviour(ComposedEvent::RequestResponse(
                 request_response::Event::Message {message, peer})) => { 
                     match message {
@@ -206,8 +234,6 @@ impl EventLoop {
                                 .remove(&request_id)
                                 .expect("Request to still be pending.")
                                 .send(Ok(response.0));
-
-                        
                         }
                         request_response::Message::Request { request, channel, .. } => {
                             // Send the request to the event sender
@@ -218,11 +244,43 @@ impl EventLoop {
                         }
                     }
             },
-            SwarmEvent::Behaviour(ComposedEvent::Kademlia(
-                KademliaEvent::OutboundQueryProgressed { id, result, stats, step })) => {
-                    println!("Outbound query progressed: {:?}, {:?}, {:?}, {:?}", id, result, stats, step);
+            /// Kademlia Events: https://docs.rs/libp2p-kad/latest/libp2p_kad/enum.QueryResult.html
+            /// All of the come in the form of: OutboundQueryProgressed
+            /// GetClosestPeers
+            /// 
+            // SwarmEvent::Behaviour(ComposedEvent::Kademlia(
+            //     KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::GetClosestPeers(result), stats, step })) => {
+            //         println!("Outbound query progressed: {:?}, {:?}, {:?}, {:?}", id, result, stats, step);
+            // },
+            SwarmEvent::Behaviour(ComposedEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
+            result: QueryResult::GetClosestPeers(result),
+            ..
+            })) => {
+               
+                match result {
+                    Ok(ok) => {
+                        if !ok.peers.is_empty() {
+                            println!("Query finished with closest peers: {:#?}", ok.peers)
+                        } else {
+                            // The example is considered failed as there
+                            // should always be at least 1 reachable peer.
+                            println!("Query finished with no closest peers.")
+                        }
+                    }
+                    Err(GetClosestPeersError::Timeout { peers, .. }) => {
+                        if !peers.is_empty() {
+                            println!("Query timed out with closest peers: {peers:#?}")
+                        } else {
+                            // The example is considered failed as there
+                            // should always be at least 1 reachable peer.
+                            println!("Query timed out with no closest peers.");
+                        }
+                    }
+                }
             },
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
+            SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {println!("Gossipsub event: {:?}", event);},
+            SwarmEvent::Behaviour(ComposedEvent::Mdns(event)) => {println!("Mdns event: {:?}", event);},
             SwarmEvent::Behaviour(event) => {println!("General event: {:?}", event);},
             SwarmEvent::Dialing { peer_id: Some(peer_id), .. } => { },
             SwarmEvent::IncomingConnection { .. } => {},
@@ -268,7 +326,7 @@ impl EventLoop {
 
                 one_sender.send(Ok(()));
             }
-            Command::BootstrapTo { peer_id, peer_addr, one_sender } => {               
+            Command::BootstrapTo { peer_id, peer_addr, one_sender } => {  
                 self.swarm
                     .behaviour_mut()
                     .kademlia
@@ -280,7 +338,7 @@ impl EventLoop {
                 let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer_id, AuthenticatedRequest(data));
                 self.pending_requests.insert(request_id, one_sender);
             }
-            Command::GetPeers { one_sender } => {
+            Command::GetDialedPeers { one_sender } => {
                 let peers = self.swarm.connected_peers();
                 let mut peer_list: HashSet<PeerId> = HashSet::new();
                 for peer in peers {
@@ -296,7 +354,13 @@ impl EventLoop {
                     .send_response(channel, AuthenticatedResponse("Success".to_string().into_bytes()))
                     .expect("Responding to the request");
             }
-
+            Command::GetClosestPeers { key, one_sender } => {
+                let request_id = self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .get_closest_peers(key);
+                self.pending_behaviour_requests.insert(request_id, one_sender);
+            },
         }
     }
 }
@@ -325,7 +389,11 @@ pub enum Command {
     ConfirmRequest {
         channel: ResponseChannel<AuthenticatedResponse>,
     },
-    GetPeers {
+    GetDialedPeers {
+        one_sender: oneshot::Sender<HashSet<PeerId>>,
+    },
+    GetClosestPeers {
+        key: Vec<u8>,
         one_sender: oneshot::Sender<HashSet<PeerId>>,
     },
 }
@@ -348,6 +416,8 @@ pub async fn new_executor() -> TokioExecutor {
 pub struct ComposedBehaviour {
     pub request_response: request_response::cbor::Behaviour<AuthenticatedRequest, AuthenticatedResponse>,
     pub kademlia: Kademlia<MemoryStore>,
+    pub gossipsub: gossipsub::Behaviour,
+    pub mdns: mdns::tokio::Behaviour,
 }
 
 
@@ -355,6 +425,8 @@ pub struct ComposedBehaviour {
 pub enum ComposedEvent {
     RequestResponse(request_response::Event<AuthenticatedRequest, AuthenticatedResponse>),
     Kademlia(KademliaEvent),
+    Gossipsub(gossipsub::Event),
+    Mdns(mdns::Event),
 }
 
 impl From<request_response::Event<AuthenticatedRequest, AuthenticatedResponse>> for ComposedEvent {
@@ -366,6 +438,18 @@ impl From<request_response::Event<AuthenticatedRequest, AuthenticatedResponse>> 
 impl From<KademliaEvent> for ComposedEvent {
     fn from(event: KademliaEvent) -> Self {
         ComposedEvent::Kademlia(event)
+    }
+}
+
+impl From<gossipsub::Event> for ComposedEvent {
+    fn from(event: gossipsub::Event) -> Self {
+        ComposedEvent::Gossipsub(event)
+    }
+}
+
+impl From<mdns::Event> for ComposedEvent {
+    fn from(event: mdns::Event) -> Self {
+        ComposedEvent::Mdns(event)
     }
 }
 

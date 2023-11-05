@@ -16,7 +16,7 @@ use std::time::Duration;
 async fn main() -> Result<(), Box<dyn std::error::Error>> { 
 
     let (client, event_receiver, peer_id) = 
-        P2PServer::initialize_server("/ip4/127.0.0.1/tcp/40820".to_string(), Some("./src/bootstrap-nodes.txt".to_string())).await?;
+        P2PServer::initialize_server("/ip4/127.0.0.1/tcp/40821".to_string(), Some("./src/bootstrap-nodes.txt".to_string())).await?;
     
     loop{
 
