@@ -1,3 +1,8 @@
+User inputs
+Local Port
+cargo run 40821
+
+
 
 
 
@@ -7,7 +12,7 @@
 //     let opt = Opt::parse();
 
 //     let (mut client, mut events) = new_server(opt.secret_key_seed).await?;
-
+       
 //     client
 //         .start_listening(opt.listen_address)
 //         .await
@@ -36,13 +41,13 @@
 //                             _ => return Err("Expect peer multiaddr to contain peer ID.".into()),
 //                         };
 //                         let data = "CoolData".to_string().into_bytes();
-//                         client.send_data(peer_id, data).await.expect("Successfully sent data");
+//                         client.send_rr(peer_id, data).await.expect("Successfully sent data");
 //                     },
 //                     "broadcast" => {
 //                         let dialed_peers = client.get_dialed_peers().await;    
 //                         for peer in dialed_peers {
 //                             let data = "CoolData".to_string().into_bytes();
-//                             client.send_data(peer, data).await.expect("Successfully sent data");
+//                             client.send_rr(peer, data).await.expect("Successfully sent data");
 //                         }
 //                     },
 //                     _ => println!("Unknown command"),
@@ -51,9 +56,9 @@
 
 //             event = events.recv() => {
 //                 match event {
-//                     Some(Event::InboundRequest { request, channel }) => {
+//                     Some(Event::RRRequest { request, channel }) => {
 //                         println!("Received request: {:?}", request);
-//                         client.confirm_request( channel ).await;
+//                         client.recv_rr( channel ).await;
 //                     }
 //                     None => return Ok(()),
 //                 }

@@ -1,15 +1,12 @@
 
-use libp2p::kad::GetClosestPeersError;
-use libp2p::kad::Kademlia;
-use libp2p::kad::KademliaEvent;
-use libp2p::kad::QueryId;
-use libp2p::kad::QueryResult;
+use libp2p::gossipsub::TopicHash;
+use libp2p::kad::{GetClosestPeersError,Kademlia,KademliaEvent,QueryId, QueryResult, QueryStats, ProgressStep, Quorum, Record};
 use libp2p::kad::store::MemoryStore;
+
 use tokio_stream::StreamExt;
 use tokio::sync::oneshot;
 use tokio::sync::mpsc;
-use tokio::macros::support::Future;
-use tokio::macros::support::Pin;
+use tokio::macros::support::{Future, Pin};
 
 use libp2p::multiaddr::Protocol;
 use libp2p::{PeerId, Multiaddr, Swarm, mdns, gossipsub};
@@ -66,19 +63,6 @@ impl Client {
         one_receiver.await.expect("Receiver has not responded")
     }
 
-    pub async fn bootstrap_to(
-        &mut self,
-        peer_id: PeerId,
-        peer_addr: Multiaddr,
-    ) -> Result<(), Box<dyn Error + Send>> {
-        let (one_sender, one_receiver) = oneshot::channel();
-        self.sender
-            .send(Command::BootstrapTo {peer_id, peer_addr, one_sender })
-                .await
-                .expect("Failed to send dial command");
-        one_receiver.await.expect("Receiver has not responded")
-    }
-
     /// Send data to the given peer.
     ///
     /// # Arguments
@@ -90,18 +74,33 @@ impl Client {
     /// # Returns
     ///
     /// The response from the peer as a `Vec<u8>`.
-    pub async fn send_data(
+    pub async fn send_rr(
         &mut self,
         peer_id: PeerId,
         data: Vec<u8>,
     ) -> Result <Vec<u8>, Box<dyn Error + Send>> {
         let (one_sender, one_receiver) = oneshot::channel();
         self.sender
-            .send(Command::SendData { data, peer_id, one_sender })
+            .send(Command::SendRR { data, peer_id, one_sender })
             .await
             .expect("Failed to send data");
-        one_receiver.await.expect("Receiver has not responded to SendData command")
+        one_receiver.await.expect("Receiver has not responded to SendRR command")
+    }
 
+    /// Confirm a request.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - The `Client` to confirm the request with.
+    /// * `channel` - The `ResponseChannel` to confirm the request for.
+    pub async fn recv_rr(
+        &mut self,
+        channel: ResponseChannel<AuthenticatedResponse>,
+    ) {
+        self.sender
+            .send(Command::RecvRR { channel: channel })
+            .await
+            .expect("Could not respond");
     }
     
     /// Get the list of peers.
@@ -122,37 +121,108 @@ impl Client {
         one_receiver.await.expect("Receiver has not responded to GetDialedPeers command")
     }
 
-    /// Confirm a request.
-    ///
-    /// # Arguments
-    ///
-    /// * `self` - The `Client` to confirm the request with.
-    /// * `channel` - The `ResponseChannel` to confirm the request for.
-    pub async fn confirm_request(
+    pub async fn kd_add_address(
         &mut self,
-        channel: ResponseChannel<AuthenticatedResponse>,
-    ) {
-        self.sender
-            .send(Command::ConfirmRequest { channel: channel })
-            .await
-            .expect("Could not respond");
-    }
-
-
-    /// Get the list of peers closest to the given key.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `self` - The `Client` to get the list of peers from.
-    /// * `key` - The key to get the list of peers closest to.
-
-    pub async fn get_closest_peers(&mut self, key: Vec<u8>) -> HashSet<PeerId> {
+        peer_id: PeerId,
+        peer_addr: Multiaddr,
+    ) -> Result<(), Box<dyn Error + Send>> {
         let (one_sender, one_receiver) = oneshot::channel();
         self.sender
-            .send(Command::GetClosestPeers { key, one_sender })
+            .send(Command::KdAddAddress {peer_id, peer_addr, one_sender })
+                .await
+                .expect("Failed to send dial command");
+        one_receiver.await.expect("Receiver has not responded")
+    }
+
+    // https://docs.rs/libp2p-kad/latest/libp2p_kad/struct.Behaviour.html
+
+    /*
+        Each Kademlia Event Request gives out a request id. 
+        Depending on the request that is being made, it is client's responsibility to match
+        the request id with the response id.
+     */
+
+    pub async fn kd_get_closest_peers(&mut self, key: Vec<u8>) -> QueryId {
+        let (one_sender, one_receiver) = oneshot::channel();
+        self.sender
+            .send(Command::KDGetClosestPeers { key, one_sender })
             .await
             .expect("Command receiver not to be dropped.");
-        one_receiver.await.expect("Receiver has not responded to GetClosestPeers command")
+        one_receiver.await.expect("Receiver has not responded to KDGetClosestPeers command")
+    }
+
+    pub async fn kd_start_providing(&mut self, key: Vec<u8>) -> QueryId {
+        let (one_sender, one_receiver) = oneshot::channel();
+
+        self.sender
+            .send(Command::KDStartProviding { key, one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+        one_receiver.await.expect("Receiver has not responded to KDStartProviding command")
+    }
+
+    pub async fn kd_get_providers(&mut self, key: Vec<u8>) -> QueryId {
+        let (one_sender, one_receiver) = oneshot::channel();
+
+        self.sender
+            .send(Command::KDGetProviders { key, one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+
+        one_receiver.await.expect("Receiver has not responded to KDGetProviders command")
+    }
+
+    pub async fn kd_get_record(&mut self, key: Vec<u8>) -> QueryId {
+        let (one_sender, one_receiver) = oneshot::channel();
+
+        self.sender
+            .send(Command::KDGetRecord { key, one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+
+        one_receiver.await.expect("Receiver has not responded to KDGetRecord command")
+
+    }
+
+    pub async fn kd_put_record(&mut self, record: Record, quorum: Option<Quorum>) -> QueryId {
+        let (one_sender, one_receiver) = oneshot::channel();
+        
+        if (quorum.is_none()) { 
+            let default_quorum = Quorum::One;
+            self.sender
+                .send(Command::KDPutRecord { record, quorum: Some(default_quorum), one_sender })
+                .await
+                .expect("Command receiver not to be dropped.");
+        } else {
+            self.sender
+                .send(Command::KDPutRecord { record, quorum, one_sender })
+                .await
+                .expect("Command receiver not to be dropped.");
+        }
+        one_receiver.await.expect("Receiver has not responded to KDPutRecord command")
+    }
+
+    pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) {
+        self.sender
+            .send(Command::GossipPublish { topic, message })
+            .await
+            .expect("Command receiver not to be dropped.");
+    }
+
+    pub async fn gossip_subscribe(&mut self, topic: String) {
+        self.sender
+            .send(Command::GossipSubscribe { topic })
+            .await
+            .expect("Command receiver not to be dropped.");
+    }
+
+    pub async fn gossip_all_peers(&mut self) -> HashSet<(PeerId)> {
+        let (one_sender, one_receiver) = oneshot::channel();
+        self.sender
+            .send(Command::GossipAllPeers{ one_sender})
+            .await
+            .expect("Command receiver not to be dropped.");
+        one_receiver.await.expect("Receiver has not responded to GossipAllPeers command")
     }
 
 }
@@ -238,7 +308,7 @@ impl EventLoop {
                         request_response::Message::Request { request, channel, .. } => {
                             // Send the request to the event sender
                             self.event_sender
-                                .send({ Event::InboundRequest { request: request.0, channel }})
+                                .send({ Event::RRRequest { request: request.0, channel }})
                                 .await
                                 .expect("Failed to make a request");
                         }
@@ -246,10 +316,10 @@ impl EventLoop {
             },
             /// Kademlia Events: https://docs.rs/libp2p-kad/latest/libp2p_kad/enum.QueryResult.html
             /// All of the come in the form of: OutboundQueryProgressed
-            /// GetClosestPeers
+            /// KDGetClosestPeers
             /// 
             // SwarmEvent::Behaviour(ComposedEvent::Kademlia(
-            //     KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::GetClosestPeers(result), stats, step })) => {
+            //     KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::KDGetClosestPeers(result), stats, step })) => {
             //         println!("Outbound query progressed: {:?}, {:?}, {:?}, {:?}", id, result, stats, step);
             // },
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
@@ -278,6 +348,13 @@ impl EventLoop {
                     }
                 }
             },
+
+            SwarmEvent::Behaviour(ComposedEvent::Kademlia(KademliaEvent::OutboundQueryProgressed { id, result, stats, step })) => {
+                self.event_sender
+                    .send({ Event::KDProgressed { id, result, stats, step }})
+                    .await
+                    .expect("Failed to make a request");
+            }
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
             SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {println!("Gossipsub event: {:?}", event);},
             SwarmEvent::Behaviour(ComposedEvent::Mdns(event)) => {println!("Mdns event: {:?}", event);},
@@ -326,7 +403,7 @@ impl EventLoop {
 
                 one_sender.send(Ok(()));
             }
-            Command::BootstrapTo { peer_id, peer_addr, one_sender } => {  
+            Command::KdAddAddress { peer_id, peer_addr, one_sender } => {  
                 self.swarm
                     .behaviour_mut()
                     .kademlia
@@ -334,9 +411,16 @@ impl EventLoop {
                 
                 one_sender.send(Ok(()));
             }
-            Command::SendData { data, peer_id, one_sender } => {
+            Command::SendRR { data, peer_id, one_sender } => {
                 let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer_id, AuthenticatedRequest(data));
                 self.pending_requests.insert(request_id, one_sender);
+            }
+            Command::RecvRR { channel } => {
+                self.swarm
+                    .behaviour_mut()
+                    .request_response
+                    .send_response(channel, AuthenticatedResponse("Success".to_string().into_bytes()))
+                    .expect("Responding to the request");
             }
             Command::GetDialedPeers { one_sender } => {
                 let peers = self.swarm.connected_peers();
@@ -347,20 +431,60 @@ impl EventLoop {
                 }
                 one_sender.send(peer_list);
             }
-            Command::ConfirmRequest { channel } => {
-                self.swarm
-                    .behaviour_mut()
-                    .request_response
-                    .send_response(channel, AuthenticatedResponse("Success".to_string().into_bytes()))
-                    .expect("Responding to the request");
-            }
-            Command::GetClosestPeers { key, one_sender } => {
+            Command::KDGetClosestPeers { key, one_sender } => {
                 let request_id = self.swarm
                     .behaviour_mut()
                     .kademlia
                     .get_closest_peers(key);
-                self.pending_behaviour_requests.insert(request_id, one_sender);
+                one_sender.send(request_id);
             },
+            Command::KDStartProviding { key, one_sender } => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .start_providing(key.into());
+            },
+            Command::KDGetProviders { key , one_sender} => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .get_providers(key.into());
+            },
+            Command::KDGetRecord { key , one_sender} => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .get_record(key.into());
+            },
+            Command::KDPutRecord { record, quorum, one_sender } => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .put_record(record, quorum.unwrap());
+            },
+            Command::GossipPublish { topic, message } => {
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(gossipsub::IdentTopic::new(topic), message);
+            },
+            Command::GossipSubscribe { topic } => {
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&gossipsub::IdentTopic::new(topic));
+            },
+            Command::GossipAllPeers { one_sender } => {
+                let peers = self.swarm.behaviour_mut().gossipsub.all_peers();
+                let mut peer_list = HashSet::new();
+                // Return all of the peer ids, without their associated topics
+                for peer in peers {
+                    let peer_id = peer.0.clone();
+                    peer_list.insert(peer_id);
+                }
+                one_sender.send(peer_list);
+            },
+
         }
     }
 }
@@ -376,33 +500,70 @@ pub enum Command {
         peer_addr: Multiaddr,
         one_sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
     },
-    BootstrapTo {
+    KdAddAddress {
         peer_id: PeerId,
         peer_addr: Multiaddr,
         one_sender: oneshot::Sender<Result<(), Box<dyn Error + Send>>>,
     },
-    SendData {
+    SendRR {
         data: Vec<u8>,
         peer_id: PeerId,
         one_sender: oneshot::Sender<Result<Vec<u8>, Box<dyn Error + Send>>>,
     },
-    ConfirmRequest {
+    RecvRR {
         channel: ResponseChannel<AuthenticatedResponse>,
     },
     GetDialedPeers {
         one_sender: oneshot::Sender<HashSet<PeerId>>,
     },
-    GetClosestPeers {
+    KDGetClosestPeers {
         key: Vec<u8>,
-        one_sender: oneshot::Sender<HashSet<PeerId>>,
+        one_sender: oneshot::Sender<QueryId>,
     },
+    KDStartProviding {
+        key: Vec<u8>,
+        one_sender: oneshot::Sender<QueryId>,
+    },
+    KDGetProviders {
+        key: Vec<u8>,
+        one_sender: oneshot::Sender<QueryId>,
+    },
+    KDGetRecord {
+        key: Vec<u8>,
+        one_sender: oneshot::Sender<QueryId>,
+    },
+    KDPutRecord {
+        record: Record,
+        quorum: Option<Quorum>,
+        one_sender: oneshot::Sender<QueryId>,
+    },
+    GossipPublish {
+        topic: String,
+        message: Vec<u8>,
+    },
+    GossipSubscribe {
+        topic: String,
+    },
+    GossipAllPeers {
+        one_sender: oneshot::Sender<HashSet<(PeerId)>>,
+    },
+
 }
 #[allow(unused)]
 #[derive(Debug)]
 pub enum Event {
-    InboundRequest {
+    RRRequest {
         request: Vec<u8>,
         channel: ResponseChannel<AuthenticatedResponse>,
+    },
+    KDProgressed {
+        id: QueryId,
+        result: QueryResult,
+        stats: QueryStats,
+        step: ProgressStep,
+    },
+    GossipMessage {
+        message: Vec<u8>,
     },
 }
 

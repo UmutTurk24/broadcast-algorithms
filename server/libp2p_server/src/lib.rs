@@ -11,148 +11,22 @@ use tokio::sync::mpsc::Receiver;
 use tokio::io::AsyncWriteExt;
 use tokio::time::Duration;
 
-use libp2p::core::upgrade::Version;
 use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr, mdns};
 use libp2p::swarm::SwarmBuilder;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::kad::{Kademlia, KademliaConfig};
+use libp2p::tokio_development_transport;
+use libp2p::kad::Record;
 
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::io::Cursor;
 
 
-mod client;
+pub mod client;
 use client::{Client, Event};
 
-pub const BOOT_STARTER: u32 = 1000;
-
-pub struct Servers {
-    pub peer_list: HashMap<u32, (PeerId, Multiaddr)>,
-    pub sender: HashMap<u32, tokio::sync::mpsc::Sender<UserEvent>>,
-}
-
-impl Servers {
-    /// Creates a new `Servers` instance.
-    pub fn new() -> Self {
-        Servers {
-            peer_list: HashMap::new(),
-            sender: HashMap::new(),
-        }
-    }
-
-    /// Initializes the servers and creates channels for communication.
-    ///
-    /// # Arguments
-    ///
-    /// * `self` - The `Servers` instance to initialize.
-    /// * `number` - The number of servers to initialize.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the servers were successfully initialized, or an error if initialization failed.
-    pub async fn init_servers(&mut self, number: u32) -> Result<(), Box<dyn std::error::Error>> {
-
-        for i in 0..number {
-            let listening_address = create_listen_address(i as u32);
-            let (client, event_receiver, peer_id) = 
-                P2PServer::initialize_server(listening_address.clone(), None).await?;
-
-            // Create the channel for the user to send events to the server
-            let (user_sender, user_receiver) = tokio::sync::mpsc::channel::<UserEvent>(100);
-            self.sender.insert(i,user_sender);
-            client_receiver_behaviour(client, event_receiver, user_receiver).await;
-
-            let peer_addr = define_peer_addr(peer_id, listening_address.clone());
-            self.peer_list.insert(i, (peer_id.clone(), peer_addr));
-        }
-        Ok(())
-    }
-
-    /// Connects the servers to each other.
-    ///
-    /// # Arguments
-    ///
-    /// * `self` - The `Servers` instance to connect.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the servers were successfully connected, or an error if connection failed.
-    pub async fn connect_servers(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-
-        let number_servers = self.peer_list.len();
-
-        // Grab each server and dial the other servers
-        for i in 0..number_servers {
-            let current_sender = self.sender.get(&(i as u32)).unwrap();
-
-            for j in 0..number_servers {
-                if i != j {
-                    let (peer_id, peer_addr) = self.peer_list.get(&(j as u32)).unwrap();
-                    current_sender.send(UserEvent::DialPeer(peer_id.clone(), peer_addr.clone()))
-                        .await.expect("Could not dial the peer");
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-fn create_listen_address(number: u32) -> String {
-    return format!("/ip4/127.0.0.1/tcp/{}", 40820 + number);
-}
-
-/// Define the peer address for the given `PeerId` and `Multiaddr`.
-///
-/// # Arguments
-///
-/// * `peer_id` - The `PeerId` to include in the address.
-/// * `peer_addr` - The `Multiaddr` to include in the address.
-///
-/// # Returns
-///
-/// The `Multiaddr` representing the peer address.
-fn define_peer_addr(peer_id: PeerId, peer_addr: String) -> Multiaddr {
-    let peer_addr: Multiaddr = format!("{}/p2p/{}", peer_addr, peer_id.to_base58()).parse::<Multiaddr>().unwrap();
-    return peer_addr;
-}
-
-
-pub async fn generate_keys(num: u32) -> Vec<Keypair> {
-
-    let mut file = File::create("boot_nodes.txt").await.unwrap();
-    let mut keys = Vec::new();
-    
-    for i in BOOT_STARTER..(BOOT_STARTER + num) {
-        let bytes = transform_u32_to_array_of_u8(i);
-
-        let local_key = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
-        let peer_id = PeerId::from(local_key.public()).to_string();
-        let mut buffer = Cursor::new(peer_id + "\n") ;
-
-        file.write_all_buf(&mut buffer).await.expect("Failed to write generated peer_id to file");
-        keys.push(local_key);
-    }
-
-    keys
-}
-
-pub fn transform_u32_to_array_of_u8(x:u32) -> [u8;32] {
-    let b1 : u8 = ((x >> 24) & 0xff) as u8;
-    let b2 : u8 = ((x >> 16) & 0xff) as u8;
-    let b3 : u8 = ((x >> 8) & 0xff) as u8;
-    let b4 : u8 = (x & 0xff) as u8;
-
-    let mut bytes = [0u8; 32];
-    bytes[0] = b1;
-    bytes[1] = b2;
-    bytes[2] = b3;
-    bytes[3] = b4;
-    return bytes
-}
 
 
 /// The behavior of the client receiver.
@@ -171,14 +45,14 @@ async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Recei
                         Some(UserEvent::DialPeer(peer_id, peer_addr)) => {
                             client.dial(peer_id, peer_addr).await.expect("Could not dial the peer");
                         },
-                        Some(UserEvent::SendData(data, peer_id)) => {
+                        Some(UserEvent::SendRR(data, peer_id)) => {
                             println!("Sending data {:?}", data.clone());
-                            client.send_data(peer_id, data).await.expect("Successfully sent data");
+                            client.send_rr(peer_id, data).await.expect("Successfully sent data");
                         },
                         Some(UserEvent::Broadcast(data)) => {
                             let dialed_peers = client.get_dialed_peers().await; 
                             for peer in dialed_peers {
-                                client.send_data(peer, data.clone()).await.expect("Could not send data");
+                                client.send_rr(peer, data.clone()).await.expect("Could not send data");
                             }
                             println!("Broadcasting data");
                         },
@@ -187,10 +61,14 @@ async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Recei
                 }
                 network_event = event_receiver.recv() => {
                     match network_event {
-                        Some(Event::InboundRequest { request, channel }) => {
+                        Some(Event::RRRequest { request, channel }) => {
                             println!("Received request: {:?}", request);
-                            client.confirm_request( channel ).await;
-                        }
+                            client.recv_rr( channel ).await;
+                        },
+                        Some(Event::GossipMessage { message }) => {
+                            println!("Received gossip message: {:?}", message);
+                        },
+                        Some(client::Event::KDProgressed { .. }) => todo!(),
                         None => {},
                     }
                 }
@@ -200,10 +78,11 @@ async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Recei
 }
 
 
+
 #[derive(Debug)]
 pub enum UserEvent {
     DialPeer(PeerId, Multiaddr),
-    SendData(Vec<u8>, PeerId),
+    SendRR(Vec<u8>, PeerId),
     Broadcast(Vec<u8>),
 }
 
@@ -233,6 +112,8 @@ impl P2PServer {
         // Generate a local keypair and peer ID 
         let local_key = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(local_key.public());
+
+        println!("Local peer id: {:?}", peer_id);
         
         // Create a new executor for the server
         let executor = new_executor().await;
@@ -301,11 +182,7 @@ impl P2PServer {
         };
 
         // Create the transport for the server
-        let transport = tcp::tokio::Transport::new(Default::default())
-            .upgrade(Version::V1Lazy)
-            .authenticate(noise::Config::new(&local_key)?)
-            .multiplex(yamux::Config::default())
-            .boxed();
+        let transport = tokio_development_transport(local_key)?;
 
         // ===========================================
         // =============  BUILDING SWARM =============
@@ -338,15 +215,20 @@ impl P2PServer {
                 let parts: Vec<&str> = line.split(" ").collect();
                 let (peer_addr, peer_id) = (parts[0], parts[1]);
                 
-                client.bootstrap_to(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
+                client.kd_add_address(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
             }
         }
-
-        let peers = client.get_closest_peers(PeerId::random().to_bytes()).await;
-        println!("Closest peers: {:?}", peers);
         
         // Return the client, event receiver, and peer ID
         Ok((client, event_receiver, peer_id))
     }
     
+    pub fn create_record(key: Vec<u8>, value: Vec<u8>, publisher: Option<PeerId>) -> Record {
+        Record {
+            key: key.into(),
+            value,
+            publisher,
+            expires: None,
+        }
+    }
 }
