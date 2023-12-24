@@ -202,11 +202,20 @@ impl Client {
         one_receiver.await.expect("Receiver has not responded to KDPutRecord command")
     }
 
-    pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) {
+    // https://docs.rs/libp2p-gossipsub/latest/libp2p_gossipsub/struct.Behaviour.html
+
+    /*
+        Similar to Kademlia events, Gossipsub publish event also give out a request id
+    */
+
+    pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) -> Result<gossipsub::MessageId, gossipsub::PublishError> {
+        let (one_sender, one_receiver) = oneshot::channel();
+
         self.sender
-            .send(Command::GossipPublish { topic, message })
+            .send(Command::GossipPublish { topic, message, one_sender })
             .await
             .expect("Command receiver not to be dropped.");
+        one_receiver.await.expect("Receiver has not responded to GossipPublish command")
     }
 
     pub async fn gossip_subscribe(&mut self, topic: String) {
@@ -357,7 +366,56 @@ impl EventLoop {
             }
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
             SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {println!("Gossipsub event: {:?}", event);},
-            SwarmEvent::Behaviour(ComposedEvent::Mdns(event)) => {println!("Mdns event: {:?}", event);},
+            SwarmEvent::Behaviour(ComposedEvent::Mdns(event)) => {
+                println!("Mdns event: {:?}", event);
+                match event {
+                    mdns::Event::Discovered(list) => {
+                        
+                        for (peer_id, multiaddr) in list {
+                            println!("Discovered {:?} with address {}", peer_id, multiaddr);
+
+                            // Dial the discovered peer if not dialed before
+                            println!("Res: {:?}", multiaddr.clone().with(Protocol::P2p(peer_id)));
+                            let dial_result = self.swarm.dial(multiaddr.clone().with(Protocol::P2p(peer_id)));
+
+                            if dial_result.is_err() {
+                                println!("Failed to dial {:?} \n", multiaddr);
+                            } else {
+
+                                // Add the discovered peers to the kademlia routing table
+                                self.swarm
+                                    .behaviour_mut()
+                                    .kademlia
+                                    .add_address(&peer_id, multiaddr.clone());
+
+                                // Add the discovered peers to the gossipsub routing table
+                                self.swarm
+                                    .behaviour_mut()
+                                    .gossipsub
+                                    .add_explicit_peer(&peer_id);
+
+
+                            }
+                            
+                            
+                        }
+                    }
+                    mdns::Event::Expired(expired) => {
+                        for (peer_id, multiaddr) in expired {
+                            println!("Expired {:?} with address {}", peer_id, multiaddr);
+                            self.swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .remove_address(&peer_id, &multiaddr);
+
+                            self.swarm
+                                .behaviour_mut()
+                                .gossipsub
+                                .remove_explicit_peer(&peer_id);
+                        }
+                    }
+                }
+            },
             SwarmEvent::Behaviour(event) => {println!("General event: {:?}", event);},
             SwarmEvent::Dialing { peer_id: Some(peer_id), .. } => { },
             SwarmEvent::IncomingConnection { .. } => {},
@@ -390,6 +448,7 @@ impl EventLoop {
             }
             Command::Dial { peer_id, peer_addr, one_sender } => {  
                 // Dial the peer              
+                println!("Res 2: {:?}", peer_addr.clone().with(Protocol::P2p(peer_id)));
                 let dial_result = self.swarm.dial(peer_addr.clone().with(Protocol::P2p(peer_id)));
                 if dial_result.is_err() {
                     println!("Failed to dial {:?}", peer_addr);
@@ -462,11 +521,12 @@ impl EventLoop {
                     .kademlia
                     .put_record(record, quorum.unwrap());
             },
-            Command::GossipPublish { topic, message } => {
-                self.swarm
+            Command::GossipPublish { topic, message, one_sender } => {
+                let message_id = self.swarm
                     .behaviour_mut()
                     .gossipsub
                     .publish(gossipsub::IdentTopic::new(topic), message);
+                one_sender.send(message_id);
             },
             Command::GossipSubscribe { topic } => {
                 self.swarm
@@ -540,6 +600,7 @@ pub enum Command {
     GossipPublish {
         topic: String,
         message: Vec<u8>,
+        one_sender: oneshot::Sender<Result<gossipsub::MessageId, gossipsub::PublishError>>,
     },
     GossipSubscribe {
         topic: String,

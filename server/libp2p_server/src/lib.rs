@@ -2,9 +2,14 @@ use client::ComposedBehaviour;
 use client::EventLoop;
 use client::new_executor;
 
+use futures::{future::Either, prelude::*, select};
+use libp2p::core::muxing::StreamMuxerBox;
+use libp2p::core::transport::OrTransport;
+use libp2p::core::upgrade;
 use libp2p::gossipsub;
 use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
+use libp2p::quic;
 use tokio::fs::File;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
@@ -17,6 +22,7 @@ use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::tokio_development_transport;
 use libp2p::kad::Record;
+
 
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
@@ -104,19 +110,17 @@ pub struct P2PServer;
 /// Returns an error if there was a problem initializing the server.
 impl P2PServer {
     
-    pub async fn initialize_server(listen_address: String, bootstrap_nodes: Option<String>) -> Result<(Client, Receiver<Event>, PeerId), Box<dyn Error>> {
+    pub async fn initialize_server(bootstrap_nodes: Option<String>) -> Result<(Client, Receiver<Event>, PeerId), Box<dyn Error>> {
 
         // ==================================================
         // =============     KEY GENERATIONS    =============
         // ==================================================
+
         // Generate a local keypair and peer ID 
         let local_key = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(local_key.public());
 
         println!("Local peer id: {:?}", peer_id);
-        
-        // Create a new executor for the server
-        let executor = new_executor().await;
 
         // ==================================================
         // =============  BEHAVIOUR DEFINITIONS =============
@@ -137,7 +141,6 @@ impl P2PServer {
                 MemoryStore::new(peer_id), 
                 KademliaConfig::default()
         );
-        // 
 
         // To content-address message, we can take the hash of message and use it as an ID.
         // WARNING: USING A STD HASH FUNCTION IS NOT SECURE!
@@ -165,7 +168,7 @@ impl P2PServer {
         // Create a Gossipsub topic
         let topic = gossipsub::IdentTopic::new("test-net");
         // Subscribe to a topic
-        gossipsub_behaviour.subscribe(&topic)?;
+        println!("Subscribed to test-net successfully {}", gossipsub_behaviour.subscribe(&topic)?);
 
         // Build mdns network behaviour
         let mdns_behaviour = mdns::tokio::Behaviour::new(
@@ -181,16 +184,31 @@ impl P2PServer {
             mdns: mdns_behaviour,
         };
 
-        // Create the transport for the server
-        let transport = tokio_development_transport(local_key)?;
+        // Create the transport layers (tcp and quic) for the server
+        let tcp_transport = libp2p::tcp::tokio::Transport::new(tcp::Config::default().nodelay(true))
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::Config::new(&local_key).expect("signing libp2p-noise static keypair"))
+            .multiplex(yamux::Config::default())
+            .timeout(std::time::Duration::from_secs(20))
+            .boxed();
+    
+        let quic_transport = quic::tokio::Transport::new(quic::Config::new(&local_key));
+    
+        let transport = OrTransport::new(quic_transport, tcp_transport)
+            .map(|either_output, _| match either_output {
+                Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+                Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+            })
+            .boxed();
 
         // ===========================================
         // =============  BUILDING SWARM =============
         // ===========================================
 
         // Build the swarm for the server
-        let swarm = 
-            SwarmBuilder::with_executor(transport, self_behaviour, peer_id.clone(), executor).build();
+        let swarm = SwarmBuilder::with_tokio_executor(transport, self_behaviour, peer_id).build();
+        // let swarm = 
+        //     SwarmBuilder::with_executor(transport, self_behaviour, peer_id.clone(), executor).build();
     
         // Create channels for sending commands and receiving events
         let (command_sender, command_receiver) = mpsc::channel(32);
@@ -203,9 +221,9 @@ impl P2PServer {
         // Create a client for sending commands to the server
         let mut client = Client {sender: command_sender};
 
-        // Start listening on the given address
-        let addr: Multiaddr = listen_address.parse().expect("Failed to parse address");
-        client.start_listening(addr).await.expect("Failed to start listening");
+        // Start listening on a randomly available port (assigned by the OS)
+        client.start_listening("/ip4/0.0.0.0/tcp/0".parse()?).await.expect("Failed to start listening");
+        client.start_listening("/ip4/0.0.0.0/udp/0/quic-v1".parse()?).await.expect("Failed to start listening");
 
         // If bootstrap nodes were provided, connect to them
         if let Some(bootstrap_nodes) = bootstrap_nodes {
