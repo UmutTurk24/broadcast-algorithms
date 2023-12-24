@@ -365,7 +365,26 @@ impl EventLoop {
                     .expect("Failed to make a request");
             }
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
-            SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {println!("Gossipsub event: {:?}", event);},
+            SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {
+
+                println!("Gossipsub event: {:?}", event);
+                match event {
+                    gossipsub::Event::Message {propagation_source, message_id, message } => {
+                        println!("Received message: {:?} from {:?}", String::from_utf8_lossy(&message.data), propagation_source);
+                        self.event_sender
+                            .send({ Event::GossipMessage { message: message.data }})
+                            .await
+                            .expect("Failed to make a request");
+                    }
+                    gossipsub::Event::Subscribed { peer_id, topic } => {
+                        println!("Subscribed to {:?} from {:?}", topic, peer_id);
+                    }
+                    gossipsub::Event::Unsubscribed { peer_id, topic } => {
+                        println!("Unsubscribed from {:?} from {:?}", topic, peer_id);
+                    }
+                    _ => {}
+                }
+            },
             SwarmEvent::Behaviour(ComposedEvent::Mdns(event)) => {
                 println!("Mdns event: {:?}", event);
                 match event {
