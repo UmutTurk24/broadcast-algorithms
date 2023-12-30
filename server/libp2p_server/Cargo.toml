@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = {version = "1.15", features = ["full", "net", "io-util", "io-std", "macros", "rt", "rt-multi-thread"] }
-libp2p = { version = "0.52.3", features = ["async-std", "cbor", "dns", "kad", "noise", "tokio", "macros", "request-response", "tcp", "websocket", "yamux", "mdns", "gossipsub", "quic"] }
+libp2p = { version = "0.52.3", features = ["async-std", "cbor", "dns", "kad", "noise", "tokio", "macros", "request-response", "tcp", "websocket", "yamux", "mdns", "gossipsub", "quic", "rsa"] }
 serde = { version = "1.0.188", features = ["derive"] }
 async-std = { version = "1.12", features = ["attributes"] }
 futures = "0.3.28"

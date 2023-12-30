@@ -1,6 +1,5 @@
 use client::ComposedBehaviour;
 use client::EventLoop;
-use client::new_executor;
 
 use futures::{future::Either, prelude::*, select};
 use libp2p::core::muxing::StreamMuxerBox;
@@ -17,72 +16,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::Duration;
 
 use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr, mdns};
-use libp2p::swarm::SwarmBuilder;
 use libp2p::request_response::{self, ProtocolSupport};
+use libp2p::swarm::SwarmBuilder;
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::tokio_development_transport;
 use libp2p::kad::Record;
-
 
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-
 pub mod client;
 use client::{Client, Event};
-
-
-
-/// The behavior of the client receiver.
-///
-/// # Arguments
-///
-/// * `client` - The `Client` to use for communication.
-/// * `event_receiver` - The `Receiver` for network events.
-/// * `receiver` - The `Receiver` for user events.
-async fn client_receiver_behaviour(mut client: Client, mut event_receiver: Receiver<Event>, mut receiver: Receiver<UserEvent>) {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                user_event = receiver.recv() => {
-                    match user_event {
-                        Some(UserEvent::DialPeer(peer_id, peer_addr)) => {
-                            client.dial(peer_id, peer_addr).await.expect("Could not dial the peer");
-                        },
-                        Some(UserEvent::SendRR(data, peer_id)) => {
-                            println!("Sending data {:?}", data.clone());
-                            client.send_rr(peer_id, data).await.expect("Successfully sent data");
-                        },
-                        Some(UserEvent::Broadcast(data)) => {
-                            let dialed_peers = client.get_dialed_peers().await; 
-                            for peer in dialed_peers {
-                                client.send_rr(peer, data.clone()).await.expect("Could not send data");
-                            }
-                            println!("Broadcasting data");
-                        },
-                        None => {},
-                    }
-                }
-                network_event = event_receiver.recv() => {
-                    match network_event {
-                        Some(Event::RRRequest { request, channel }) => {
-                            println!("Received request: {:?}", request);
-                            client.recv_rr( channel ).await;
-                        },
-                        Some(Event::GossipMessage { message }) => {
-                            println!("Received gossip message: {:?}", message);
-                        },
-                        Some(client::Event::KDProgressed { .. }) => todo!(),
-                        None => {},
-                    }
-                }
-            }
-        }
-    });
-}
-
 
 
 #[derive(Debug)]
@@ -207,8 +152,6 @@ impl P2PServer {
 
         // Build the swarm for the server
         let swarm = SwarmBuilder::with_tokio_executor(transport, self_behaviour, peer_id).build();
-        // let swarm = 
-        //     SwarmBuilder::with_executor(transport, self_behaviour, peer_id.clone(), executor).build();
     
         // Create channels for sending commands and receiving events
         let (command_sender, command_receiver) = mpsc::channel(32);

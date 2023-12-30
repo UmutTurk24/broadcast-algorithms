@@ -18,6 +18,7 @@ use void::Void;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
+use std::process::exit;
 
 #[derive(Clone)]
 pub struct Client {
@@ -234,6 +235,15 @@ impl Client {
         one_receiver.await.expect("Receiver has not responded to GossipAllPeers command")
     }
 
+    pub async fn gossip_mesh(&mut self, topic: String) -> HashSet<PeerId> {
+        let (one_sender, one_receiver) = oneshot::channel();
+        self.sender
+            .send(Command::GossipMesh{ topic, one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+        one_receiver.await.expect("Receiver has not responded to GossipAllPeers command")
+    }
+
 }
 
 /// A struct representing the event loop for a libp2p client.
@@ -372,7 +382,7 @@ impl EventLoop {
                     gossipsub::Event::Message {propagation_source, message_id, message } => {
                         println!("Received message: {:?} from {:?}", String::from_utf8_lossy(&message.data), propagation_source);
                         self.event_sender
-                            .send({ Event::GossipMessage { message: message.data }})
+                            .send({ Event::GossipMessage { propagation_source, message_id, message }})
                             .await
                             .expect("Failed to make a request");
                     }
@@ -394,29 +404,24 @@ impl EventLoop {
                             println!("Discovered {:?} with address {}", peer_id, multiaddr);
 
                             // Dial the discovered peer if not dialed before
-                            println!("Res: {:?}", multiaddr.clone().with(Protocol::P2p(peer_id)));
                             let dial_result = self.swarm.dial(multiaddr.clone().with(Protocol::P2p(peer_id)));
 
                             if dial_result.is_err() {
                                 println!("Failed to dial {:?} \n", multiaddr);
-                            } else {
-
-                                // Add the discovered peers to the kademlia routing table
-                                self.swarm
-                                    .behaviour_mut()
-                                    .kademlia
-                                    .add_address(&peer_id, multiaddr.clone());
-
-                                // Add the discovered peers to the gossipsub routing table
-                                self.swarm
-                                    .behaviour_mut()
-                                    .gossipsub
-                                    .add_explicit_peer(&peer_id);
-
-
+                                continue;
                             }
                             
-                            
+                            // Add the discovered peers to the kademlia routing table
+                            self.swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(&peer_id, multiaddr.clone());
+
+                            // Add the discovered peers to the gossipsub routing table
+                            self.swarm
+                                .behaviour_mut()
+                                .gossipsub
+                                .add_explicit_peer(&peer_id);
                         }
                     }
                     mdns::Event::Expired(expired) => {
@@ -563,6 +568,20 @@ impl EventLoop {
                 }
                 one_sender.send(peer_list);
             },
+            Command::GossipMesh { topic, one_sender } => {
+                let peers = 
+                    self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .mesh_peers(&gossipsub::TopicHash::from_raw(topic));
+
+                let mut peer_list = HashSet::new();
+
+                for peer in peers {
+                    peer_list.insert(peer.clone());
+                }
+                one_sender.send(peer_list);
+            }
 
         }
     }
@@ -627,6 +646,10 @@ pub enum Command {
     GossipAllPeers {
         one_sender: oneshot::Sender<HashSet<(PeerId)>>,
     },
+    GossipMesh {
+        topic: String,
+        one_sender: oneshot::Sender<HashSet<PeerId>>,
+    },
 
 }
 #[allow(unused)]
@@ -643,7 +666,9 @@ pub enum Event {
         step: ProgressStep,
     },
     GossipMessage {
-        message: Vec<u8>,
+        propagation_source: PeerId, 
+        message_id: gossipsub::MessageId,
+        message: gossipsub::Message,
     },
 }
 
