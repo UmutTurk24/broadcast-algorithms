@@ -6,20 +6,16 @@ use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade;
 use libp2p::gossipsub;
-use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
 use libp2p::quic;
-use tokio::fs::File;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
-use tokio::io::AsyncWriteExt;
 use tokio::time::Duration;
 
 use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr, mdns};
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::SwarmBuilder;
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::kad::Record;
 
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
@@ -28,7 +24,7 @@ use std::hash::Hasher;
 
 pub mod client;
 use client::{Client, Event};
-
+pub mod behaviour;
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -55,7 +51,7 @@ pub struct P2PServer;
 /// Returns an error if there was a problem initializing the server.
 impl P2PServer {
     
-    pub async fn initialize_server(bootstrap_nodes: Option<String>) -> Result<(Client, Receiver<Event>, PeerId), Box<dyn Error>> {
+    pub async fn initialize_server(bootstrap_nodes: Option<String>, client_behaviour: ClientBehaviour) -> Result<(), Box<dyn Error>> {
 
         // ==================================================
         // =============     KEY GENERATIONS    =============
@@ -179,17 +175,29 @@ impl P2PServer {
                 client.kd_add_address(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
             }
         }
-        
-        // Return the client, event receiver, and peer ID
-        Ok((client, event_receiver, peer_id))
+
+        // ==================================================
+        // =============  BEHAVIOUR SELECTION   =============
+        // ==================================================
+
+        // Match the behaviour function
+        match client_behaviour {
+            ClientBehaviour::ReliableBroadcast => {
+                behaviour::ReliableBroadcast::run(client.clone(), event_receiver, peer_id).await?;
+            },
+            ClientBehaviour::VABA => {
+                // behaviour::VABA::run(client.clone(), event_receiver, peer_id).await?;
+            }
+        }
+
+        Ok(())
+
     }
     
-    pub fn create_record(key: Vec<u8>, value: Vec<u8>, publisher: Option<PeerId>) -> Record {
-        Record {
-            key: key.into(),
-            value,
-            publisher,
-            expires: None,
-        }
-    }
+    
+}
+
+pub enum ClientBehaviour {
+    ReliableBroadcast,
+    VABA,
 }

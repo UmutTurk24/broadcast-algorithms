@@ -1,10 +1,11 @@
 use std::collections::{HashSet, HashMap};
 
-
+use tokio::sync::mpsc;
 use serde::{Deserialize, Serialize};
 use libp2p::{PeerId, gossipsub::MessageId};
-use libp2p_server::{P2PServer, client::Event};
+use libp2p_server::{P2PServer, client::{Event, Client}, ClientBehaviour};
 use async_std::io::{self, WriteExt};
+use tokio::sync::mpsc::Receiver;
 
 /* 
 Reliable Broadcast
@@ -18,16 +19,18 @@ Reliable Broadcast
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> { 
 
-
     // Parse the user inputs
-    let (mut client, mut event_receiver, my_peer_id) = 
-        P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string())).await?;
+
+    P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::ReliableBroadcast).await?;
     
+
+    Ok(())
+}
+
+async fn client_behaviour(mut client: Client, mut event_receiver: Receiver<Event>, my_peer_id: PeerId) -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
-    // let mut messages: HashMap<,> = HashMap::new();
-    // Message, MessageId, PeerId
     // Enum: Message, Ack, Commit
     let mut messages: HashMap<PeerId, String> = HashMap::new();
     let mut acks: HashMap<MessageId, Vec<PeerId>> = HashMap::new();
@@ -37,7 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop{
         println!("{:?}", acks);
         
-
         let mut buffer = String::new();
         print!(">>> ");
         stdout.flush().await?;
@@ -172,6 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 }
+
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum PropogatedMessage {

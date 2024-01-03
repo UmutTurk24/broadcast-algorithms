@@ -535,7 +535,6 @@ dependencies = [
  "libp2p_server",
  "serde",
  "serde_json",
- "tcp_server",
  "tokio",
  "tokio-stream",
  "void",
@@ -1910,6 +1909,7 @@ dependencies = [
  "futures",
  "libp2p",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-stream",
  "void",
@@ -3037,13 +3037,6 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "tcp_server"
-version = "0.1.0"
-dependencies = [
- "tokio",
 ]
 
 [[package]]

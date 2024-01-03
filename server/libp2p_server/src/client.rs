@@ -1,5 +1,3 @@
-
-use libp2p::gossipsub::TopicHash;
 use libp2p::kad::{GetClosestPeersError,Kademlia,KademliaEvent,QueryId, QueryResult, QueryStats, ProgressStep, Quorum, Record};
 use libp2p::kad::store::MemoryStore;
 
@@ -18,7 +16,6 @@ use void::Void;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
-use std::process::exit;
 
 #[derive(Clone)]
 pub struct Client {
