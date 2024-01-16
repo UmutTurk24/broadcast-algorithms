@@ -25,6 +25,7 @@ use std::hash::Hasher;
 pub mod client;
 use client::{Client, Event};
 pub mod behaviour;
+pub mod poly_commit;
 
 #[derive(Debug)]
 pub enum UserEvent {

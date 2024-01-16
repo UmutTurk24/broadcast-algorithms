@@ -377,7 +377,7 @@ impl EventLoop {
                 println!("Gossipsub event: {:?}", event);
                 match event {
                     gossipsub::Event::Message {propagation_source, message_id, message } => {
-                        println!("Received message: {:?} from {:?}", String::from_utf8_lossy(&message.data), propagation_source);
+                        // println!("Received message: {:?} from {:?}", String::from_utf8_lossy(&message.data), propagation_source);
                         self.event_sender
                             .send({ Event::GossipMessage { propagation_source, message_id, message }})
                             .await
