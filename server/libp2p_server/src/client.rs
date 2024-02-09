@@ -306,7 +306,6 @@ impl EventLoop {
         match event {
             /// Handling Composed Event Behaviours
             /// 
-            /// 
             /// ComposedEvent::RequestResponse
             /// Message::Response
             /// Message::Request
@@ -334,10 +333,6 @@ impl EventLoop {
             /// All of the come in the form of: OutboundQueryProgressed
             /// KDGetClosestPeers
             /// 
-            // SwarmEvent::Behaviour(ComposedEvent::Kademlia(
-            //     KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::KDGetClosestPeers(result), stats, step })) => {
-            //         println!("Outbound query progressed: {:?}, {:?}, {:?}, {:?}", id, result, stats, step);
-            // },
             SwarmEvent::Behaviour(ComposedEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
             result: QueryResult::GetClosestPeers(result),
             ..
@@ -371,10 +366,12 @@ impl EventLoop {
                     .await
                     .expect("Failed to make a request");
             }
-            SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {println!("Kademlia event: {:?}", event);},
+            SwarmEvent::Behaviour(ComposedEvent::Kademlia(event)) => {
+                // println!("Kademlia event: {:?}", event);
+            },
             SwarmEvent::Behaviour(ComposedEvent::Gossipsub(event)) => {
 
-                println!("Gossipsub event: {:?}", event);
+                // println!("Gossipsub event: {:?}", event);
                 match event {
                     gossipsub::Event::Message {propagation_source, message_id, message } => {
                         // println!("Received message: {:?} from {:?}", String::from_utf8_lossy(&message.data), propagation_source);
@@ -384,10 +381,10 @@ impl EventLoop {
                             .expect("Failed to make a request");
                     }
                     gossipsub::Event::Subscribed { peer_id, topic } => {
-                        println!("Subscribed to {:?} from {:?}", topic, peer_id);
+                        // println!("Subscribed to {:?} from {:?}", topic, peer_id);
                     }
                     gossipsub::Event::Unsubscribed { peer_id, topic } => {
-                        println!("Unsubscribed from {:?} from {:?}", topic, peer_id);
+                        // println!("Unsubscribed from {:?} from {:?}", topic, peer_id);
                     }
                     _ => {}
                 }
@@ -398,7 +395,7 @@ impl EventLoop {
                     mdns::Event::Discovered(list) => {
                         
                         for (peer_id, multiaddr) in list {
-                            println!("Discovered {:?} with address {}", peer_id, multiaddr);
+                            // println!("Discovered {:?} with address {}", peer_id, multiaddr);
 
                             // Dial the discovered peer if not dialed before
                             let dial_result = self.swarm.dial(multiaddr.clone().with(Protocol::P2p(peer_id)));
@@ -437,7 +434,9 @@ impl EventLoop {
                     }
                 }
             },
-            SwarmEvent::Behaviour(event) => {println!("General event: {:?}", event);},
+            SwarmEvent::Behaviour(event) => {
+                // println!("General event: {:?}", event);
+            },
             SwarmEvent::Dialing { peer_id: Some(peer_id), .. } => { },
             SwarmEvent::IncomingConnection { .. } => {},
             SwarmEvent::IncomingConnectionError { .. } => {},
@@ -464,12 +463,10 @@ impl EventLoop {
             
             Command::StartListening { addr, one_sender } => {
                 let result = self.swarm.listen_on(addr.clone()).expect("Failed to listen on address {addr}");
-                // println!("Listening on {:?}", addr);
                 one_sender.send(Ok(()));
             }
             Command::Dial { peer_id, peer_addr, one_sender } => {  
                 // Dial the peer              
-                println!("Res 2: {:?}", peer_addr.clone().with(Protocol::P2p(peer_id)));
                 let dial_result = self.swarm.dial(peer_addr.clone().with(Protocol::P2p(peer_id)));
                 if dial_result.is_err() {
                     println!("Failed to dial {:?}", peer_addr);

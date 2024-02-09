@@ -29,16 +29,7 @@ type PCS = MarlinKZG10<Bls12_381, UniPoly_381, Sponge_Bls12_381>;
 async fn main() -> Result<(), Box<dyn std::error::Error>> { 
 
     // Run the server
-    P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::ReliableBroadcast).await?;
-
-    
-    // let mut challenge_generator = ChallengeGenerator::<<Bls12_381 as Pairing>::ScalarField,PoseidonSponge<<Bls12_381 as Pairing>::ScalarField>>::Univariate((), ())
-    // let challenge_generator: ChallengeGenerator<<Bls12_377 as Pairing>::ScalarField, Sponge_Bls12_377> = ChallengeGenerator::new_univariate(&mut test_sponge);
-
-    // let mut challenge = challenge_generator.get_challenge();
-
-
-    // let mut evals = secret_poly.evaluate(&[Fr::from(1), Fr::from(2)]);
+    P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::VabaBroadcast).await?;
 
 
     Ok(())

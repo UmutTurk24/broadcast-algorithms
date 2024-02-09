@@ -186,8 +186,11 @@ impl P2PServer {
             ClientBehaviour::ReliableBroadcast => {
                 behaviour::ReliableBroadcast::run(client.clone(), event_receiver, peer_id).await?;
             },
-            ClientBehaviour::VABA => {
-                // behaviour::VABA::run(client.clone(), event_receiver, peer_id).await?;
+            ClientBehaviour::WitnessBroadcast => {
+                behaviour::WitnessBroadcast::run(client.clone(), event_receiver, peer_id).await?;
+            },
+            ClientBehaviour::VabaBroadcast => {
+                behaviour::VabaBroadcast::run(client.clone(), event_receiver, peer_id).await?;
             }
         }
 
@@ -200,5 +203,6 @@ impl P2PServer {
 
 pub enum ClientBehaviour {
     ReliableBroadcast,
-    VABA,
+    WitnessBroadcast,
+    VabaBroadcast,
 }
