@@ -1,9 +1,9 @@
-use std::{collections::{HashSet, HashMap, hash_map::RandomState}, hash::Hash};
+use std::{collections::{HashSet, HashMap}, hash::Hash};
 
 use rand_chacha::rand_core::{SeedableRng, RngCore};
 use serde::{Deserialize, Serialize};
 use libp2p::{PeerId, gossipsub::{MessageId, PublishError}};
-use crate::client::{self, Client, Event};
+use crate::client::{Client, Event};
 use async_std::io::{self, WriteExt};
 use tokio::sync::mpsc::Receiver;
 
@@ -99,7 +99,7 @@ impl ReliableBroadcast {
                 event = event_receiver.recv() => {
                     match event {
                         Some(Event::RRRequest { request, channel }) => {
-                            // println!("Received request: {:?}", request);
+                            println!("Received request: {:?}", request);
                             client.recv_rr( channel ).await;
                         },
                         Some(Event::GossipMessage { propagation_source, message, message_id }) => {
@@ -114,10 +114,10 @@ impl ReliableBroadcast {
                                 Message::RBMessage(propogated_message) => {
                                     match propogated_message {
                                         RBMessage::Message(data) => {
-                                            let result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
                                         },
                                         RBMessage::Echo(reliable_message, _rand) => {
-                                            let result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut reports, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut reports, &mut rand_chacha, &mut client).await;
                                         },
                                     }
                                 },
@@ -151,8 +151,10 @@ impl ReliableBroadcast {
             data: data,
         };
 
+        let total_peers = client.gossip_all_peers().await.len() as f64; 
+
         // If the message has already been seen, do nothing
-        if messages.contains_key(&reliable_message) {
+        if messages.contains_key(&reliable_message) && messages.get(&reliable_message).unwrap().len() as f64 > total_peers/3.0  {
             return PublishResult::Idle;
         }
 
@@ -171,7 +173,6 @@ impl ReliableBroadcast {
         PublishResult::Published(result)
     }
 
-
     async fn handle_echo(
         source: Option<PeerId>, // The peer that sent the echo
         reliable_message: ReliableMessage,
@@ -184,8 +185,6 @@ impl ReliableBroadcast {
         client: &mut Client) 
         -> PublishResult{
 
-        // Parse the message
-
         // Add the sender to the list of acked peers
         if messages.contains_key(&reliable_message) {
             let ack_peers = messages.get_mut(&reliable_message).unwrap();
@@ -195,6 +194,10 @@ impl ReliableBroadcast {
             
             if  1.0/3.0 < (ack_peers.len() as f64 / total_peers as f64) && !echo_tracker.contains(&reliable_message.message_id) {
                 println!("----Received 1/3 acks for message: {:?}", reliable_message.message_id); 
+
+                // Add the original sender of the message to the messages
+                ack_peers.insert(reliable_message.source.parse().unwrap());
+                ack_peers.insert(my_peer_id);
 
                 echo_tracker.insert(reliable_message.message_id.clone());
                 let echo = Message::RBMessage(RBMessage::Echo(reliable_message, rand_chacha.next_u64()));
@@ -230,7 +233,7 @@ impl ReliableBroadcast {
         } else {
             println!("----Received 0 acks for message: {:?}", reliable_message.message_id);
             let mut peers: HashSet<PeerId> = HashSet::new();
-            peers.insert(my_peer_id);
+            // peers.insert(my_peer_id);
             peers.insert(source.unwrap());
             echo_tracker.insert(reliable_message.message_id.clone());
             messages.insert(reliable_message, peers);
@@ -349,7 +352,7 @@ impl WitnessBroadcast {
                                 Message::WMessage(witness_message) => {
                                     match witness_message {
                                         WMessage::Report(report, _rand) => {
-                                            let result = Self::handle_report(report, source.unwrap(), my_peer_id, topic.to_string(), &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_report(report, source.unwrap(), my_peer_id, topic.to_string(), &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut rand_chacha, &mut client).await;
                                         },
                                         _ => {},
                                     }
@@ -357,10 +360,10 @@ impl WitnessBroadcast {
                                 Message::RBMessage(reliable_message) => {
                                     match reliable_message {
                                         RBMessage::Message(data) => {
-                                            let result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
                                         },
                                         RBMessage::Echo(reliable_message, _rand) => {
-                                            let result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut rand_chacha, &mut client).await;
                                         },
                                     }
                                 },
@@ -394,8 +397,10 @@ impl WitnessBroadcast {
             data: data,
         };
 
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+
         // If the message has already been seen, do nothing
-        if messages.contains_key(&reliable_message) {
+        if messages.contains_key(&reliable_message) && (messages.get(&reliable_message).unwrap().len() as f64) < total_peers/3.0  {
             return PublishResult::Idle;
         }
 
@@ -406,7 +411,7 @@ impl WitnessBroadcast {
         messages.insert(reliable_message.clone(), peers);
         
         let echo = Message::RBMessage(RBMessage::Echo(reliable_message, rand_chacha.next_u64()));
-        let serialized_message = serde_json::to_string(&echo).unwrap();
+        let serialized_message: String = serde_json::to_string(&echo).unwrap();
         let result: Result<MessageId, PublishError> = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
         println!("Published echo: {:?}", result);
         PublishResult::Published(result)
@@ -437,6 +442,10 @@ impl WitnessBroadcast {
             if  1.0/3.0 < (ack_peers.len() as f64 / total_peers as f64) && !echo_tracker.contains(&reliable_message.message_id) {
                 println!("----Received 1/3 acks for message: {:?}", reliable_message.message_id); 
 
+                // Add the original sender of the message to the messages
+                ack_peers.insert(reliable_message.source.parse().unwrap());
+                ack_peers.insert(my_peer_id);
+
                 echo_tracker.insert(reliable_message.message_id.clone());
                 let echo = Message::RBMessage(RBMessage::Echo(reliable_message, rand_chacha.next_u64()));
                 let serialized_message = serde_json::to_string(&echo).unwrap();
@@ -465,84 +474,92 @@ impl WitnessBroadcast {
 
                 println!("Published report: {:?}", result);
                 
-            }
+                // If I have already sent a report, check if any of the waitlisted reports are a subset of my report
+                if accepted_reports.contains_key(&(my_peer_id, reliable_message.message_id.clone())) {
+                    println!("Handling accepted reports");
 
-            // If I have already sent a report, check if any of the waitlisted reports are a subset of my report
-            if accepted_reports.contains_key(&(my_peer_id, reliable_message.message_id.clone())) {
-                println!("Handling accepted reports");
-                let my_report = accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
-                let my_report_peers = my_report.peers.clone();
+                    if !accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap().peers.contains(&source.unwrap().to_string()) {
 
-                let mut to_remove = Vec::new();
-
-                // Check if any of the waitlisted reports are a subset of my report
-                for (peer_id, report) in waitlisted_reports.iter() {
-                    if peer_id.1 != reliable_message.message_id {
-                        continue;
+                        // Update the peers of the accepted report
+                        let report = accepted_reports.get_mut(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
+                        report.peers.push(source.unwrap().to_string());
                     }
-                    let report_peers = report.peers.clone();
 
-                    let report_peers: HashSet<String> = report_peers.iter().cloned().collect();
-                    let my_report_peers: HashSet<String> = my_report_peers.iter().cloned().collect();
-
-                    if report_peers.is_subset(&my_report_peers) {
-                        accepted_reports.insert(peer_id.clone(), report.clone());
-                        to_remove.push(peer_id.clone());
-                    }
-                }
-
-                for peer_id in to_remove {
-                    waitlisted_reports.remove(&peer_id);
-                }
-
-                // Get the number of reports for each message id
-                let mut report_count: HashMap<String, usize> = HashMap::new();
-                for (_peer_id, message_id) in accepted_reports.keys() {
-                    let count = report_count.entry(message_id.clone()).or_insert(0);
-                    *count += 1;
-                }
-
-                for (message_id, count) in report_count.iter() {
-                    if 2.0/3.0 < (*count as f64 / total_peers as f64) && !super_report_tracker.contains(&(my_peer_id,message_id.clone())) {
-
-                        // Iterate through the accepted reports and add the peers to the super report
-                        let mut report_list = Vec::new();
-
-                        for (peer_id, report) in accepted_reports.iter() {
-                            if &report.message_id == message_id {
-                                let report = Report {
-                                    message_owner: report.message_owner.to_string(),
-                                    message_id: peer_id.1.to_string(),
-                                    data: report.data.to_string(),
-                                    peers: report.peers.iter().map(|p| p.to_string()).collect(),
-                                };
-                                report_list.push(report);
-                            }
+                    let my_report = accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
+                    let my_report_peers = my_report.peers.clone();
+    
+                    let mut to_remove = Vec::new();
+    
+                    // Check if any of the waitlisted reports are a subset of my report
+                    for (peer_id, report) in waitlisted_reports.iter() {
+                        if peer_id.1 != reliable_message.message_id {
+                            continue;
                         }
-
-                        let mut report_map = HashMap::new();
-                        report_map.insert(message_id.clone(), report_list);
-
-                        let super_report = SuperReport(report_map);
-
-                        let super_report = Message::VMessage(VMessage::SuperReport(super_report, rand_chacha.next_u64()));
-                        let serialized_message = serde_json::to_string(&super_report).unwrap();
-                        let result = client.gossip_publish(topic, serialized_message.into_bytes()).await;
-
-                        super_report_tracker.insert((my_peer_id, message_id.clone()));
-
-                        println!("Published super report: {:?}", result);
+                        let report_peers = report.peers.clone();
+    
+                        let report_peers: HashSet<String> = report_peers.iter().cloned().collect();
+                        let my_report_peers: HashSet<String> = my_report_peers.iter().cloned().collect();
+    
+                        if report_peers.is_subset(&my_report_peers) {
+                            accepted_reports.insert(peer_id.clone(), report.clone());
+                            to_remove.push(peer_id.clone());
+                        }
+                    }
+    
+                    for peer_id in to_remove {
+                        waitlisted_reports.remove(&peer_id);
+                    }
+    
+                    // Get the number of reports for each message id
+                    let mut report_count: HashMap<String, usize> = HashMap::new();
+                    for (_peer_id, message_id) in accepted_reports.keys() {
+                        let count = report_count.entry(message_id.clone()).or_insert(0);
+                        *count += 1;
+                    }
+    
+                    for (message_id, count) in report_count.iter() {
+                        if 2.0/3.0 < (*count as f64 / total_peers as f64) && !super_report_tracker.contains(&(my_peer_id,message_id.clone())) {
+    
+                            // Iterate through the accepted reports and add the peers to the super report
+                            let mut report_list = Vec::new();
+    
+                            for (peer_id, report) in accepted_reports.iter() {
+                                if &report.message_id == message_id {
+                                    let report = Report {
+                                        message_owner: report.message_owner.to_string(),
+                                        message_id: peer_id.1.to_string(),
+                                        data: report.data.to_string(),
+                                        peers: report.peers.iter().map(|p| p.to_string()).collect(),
+                                    };
+                                    report_list.push(report);
+                                }
+                            }
+    
+                            let mut report_map = HashMap::new();
+                            report_map.insert(message_id.clone(), report_list);
+    
+                            let super_report = SuperReport(report_map);
+    
+                            let super_report = Message::VMessage(VMessage::SuperReport(super_report, rand_chacha.next_u64()));
+                            let serialized_message = serde_json::to_string(&super_report).unwrap();
+                            let result = client.gossip_publish(topic, serialized_message.into_bytes()).await;
+    
+                            super_report_tracker.insert((my_peer_id, message_id.clone()));
+    
+                            println!("Published super report: {:?}", result);
+                            
+                        }
                         return PublishResult::Published(result);
-                        
                     }
                 }
             }
+
             
 
         } else {
             println!("----Received 0 acks for message: {:?}", reliable_message.message_id);
             let mut peers: HashSet<PeerId> = HashSet::new();
-            peers.insert(my_peer_id);
+            // peers.insert(my_peer_id);
             peers.insert(source.unwrap());
             echo_tracker.insert(reliable_message.message_id.clone());
             messages.insert(reliable_message, peers);
@@ -563,7 +580,6 @@ impl WitnessBroadcast {
         rand_chacha: &mut rand_chacha::ChaCha20Rng,
         client: &mut Client) 
         -> PublishResult{
-
 
         let message_id = report.message_id.clone();
         let peers = report.peers.clone();
@@ -762,30 +778,30 @@ impl VabaBroadcast {
                                 Message::WMessage(witness_message) => {
                                     match witness_message {
                                         WMessage::Report(report, _rand) => {
-                                            let result = Self::handle_report(report, source.unwrap(), my_peer_id, topic.to_string(), &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut report_echoes, &mut super_reports, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_report(report, source.unwrap(), my_peer_id, topic.to_string(), &mut messages, &mut report_echo_tracker, &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut report_echoes, &mut super_reports, &mut rand_chacha, &mut client).await;
                                         },
                                         WMessage::ReportEcho(report_owner, report, _rand) => {
-                                            let result = Self::handle_echo_report(report_owner.parse().unwrap(), report, source.unwrap(), my_peer_id, topic.to_string(), &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut report_echoes, &mut report_echo_tracker, &mut super_reports, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_echo_report(report_owner.parse().unwrap(), report, source.unwrap(), my_peer_id, topic.to_string(), &mut waitlisted_reports, &mut accepted_reports, &mut super_report_tracker, &mut report_echoes, &mut report_echo_tracker, &mut super_reports, &mut rand_chacha, &mut client).await;
                                         }
                                     }
                                 },
                                 Message::RBMessage(reliable_message) => {
                                     match reliable_message {
                                         RBMessage::Message(data) => {
-                                            let result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_message(&mut messages, data, source, my_peer_id, message_id.to_string(), topic.to_string(), &mut rand_chacha, &mut client).await;
                                         },
                                         RBMessage::Echo(reliable_message, _rand) => {
-                                            let result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut rand_chacha, &mut client).await;
                                         },
                                     }
                                 },
                                 Message::VMessage(vaba_message) => {
                                     match vaba_message {
                                         VMessage::SuperReport(super_report, _rand) => {
-                                            let result = Self::handle_super_report(super_report, source.unwrap(), my_peer_id, topic.to_string(), &mut super_reports, &mut ultra_reports, &mut rand_chacha, &mut client).await;
+                                            let _result = Self::handle_super_report(super_report, source.unwrap(), my_peer_id, topic.to_string(), &mut super_reports, &mut ultra_reports, &mut rand_chacha, &mut client).await;
                                         },
                                         VMessage::UltraReport(ultra_report, _rand) => {
-                                            let result = Self::handle_ultra_report(ultra_report, source.unwrap(), &mut ultra_reports).await;
+                                            let _result = Self::handle_ultra_report(ultra_report, source.unwrap(), &mut ultra_reports).await;
                                         },
                                     }
                                 },
@@ -818,8 +834,10 @@ impl VabaBroadcast {
             data: data,
         };
 
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+
         // If the message has already been seen, do nothing
-        if messages.contains_key(&reliable_message) {
+        if messages.contains_key(&reliable_message) && (messages.get(&reliable_message).unwrap().len() as f64)< total_peers/3.0  {
             return PublishResult::Idle;
         }
 
@@ -851,7 +869,6 @@ impl VabaBroadcast {
         client: &mut Client) 
         -> PublishResult{
 
-
         // Add the sender to the list of acked peers
         if messages.contains_key(&reliable_message) {
             let ack_peers = messages.get_mut(&reliable_message).unwrap();
@@ -862,12 +879,15 @@ impl VabaBroadcast {
             if  1.0/3.0 < (ack_peers.len() as f64 / total_peers as f64) && !echo_tracker.contains(&reliable_message.message_id) {
                 println!("----Received 1/3 acks for message: {:?}", reliable_message.message_id); 
 
+                // Add the original sender of the message to the messages
+                ack_peers.insert(reliable_message.source.parse().unwrap());
+                ack_peers.insert(my_peer_id);
+
                 echo_tracker.insert(reliable_message.message_id.clone());
                 let echo = Message::RBMessage(RBMessage::Echo(reliable_message, rand_chacha.next_u64()));
                 let serialized_message = serde_json::to_string(&echo).unwrap();
 
                 let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
-
 
                 println!("Published ack: {:?}", result);
                 return PublishResult::Published(result);
@@ -890,85 +910,94 @@ impl VabaBroadcast {
 
                 println!("Published report: {:?}", result);
                 
-            }
+                // If I have already sent a report, check if any of the waitlisted reports are a subset of my report
+                if accepted_reports.contains_key(&(my_peer_id, reliable_message.message_id.clone())) {
+                    println!("Handling accepted reports");
 
-            // If I have already sent a report, check if any of the waitlisted reports are a subset of my report
-            if accepted_reports.contains_key(&(my_peer_id, reliable_message.message_id.clone())) {
-                println!("Handling accepted reports");
-                let my_report = accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
-                let my_report_peers = my_report.peers.clone();
+                    if !accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap().peers.contains(&source.unwrap().to_string()) {
 
-                let mut to_remove = Vec::new();
-
-                // Check if any of the waitlisted reports are a subset of my report
-                for (peer_id, report) in waitlisted_reports.iter() {
-                    if peer_id.1 != reliable_message.message_id {
-                        continue;
+                        // Update the peers of the accepted report
+                        let report = accepted_reports.get_mut(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
+                        report.peers.push(source.unwrap().to_string());
                     }
-                    let report_peers = report.peers.clone();
 
-                    let report_peers: HashSet<String> = report_peers.iter().cloned().collect();
-                    let my_report_peers: HashSet<String> = my_report_peers.iter().cloned().collect();
-
-                    if report_peers.is_subset(&my_report_peers) {
-                        accepted_reports.insert(peer_id.clone(), report.clone());
-                        to_remove.push(peer_id.clone());
-                    }
-                }
-
-                for peer_id in to_remove {
-                    waitlisted_reports.remove(&peer_id);
-                }
-
-                // Get the number of reports for each message id
-                let mut report_count: HashMap<String, usize> = HashMap::new();
-                for (_peer_id, message_id) in accepted_reports.keys() {
-                    let count = report_count.entry(message_id.clone()).or_insert(0);
-                    *count += 1;
-                }
-
-                for (message_id, count) in report_count.iter() {
-                    if 2.0/3.0 < (*count as f64 / total_peers as f64) && !super_report_tracker.contains(&(my_peer_id,message_id.clone())) {
-
-                        // Iterate through the accepted reports and add the peers to the super report
-                        let mut report_list = Vec::new();
-
-                        for (peer_id, report) in accepted_reports.iter() {
-                            if &report.message_id == message_id {
-                                let report = Report {
-                                    message_owner: report.message_owner.to_string(),
-                                    message_id: peer_id.1.to_string(),
-                                    data: report.data.to_string(),
-                                    peers: report.peers.iter().map(|p| p.to_string()).collect(),
-                                };
-                                report_list.push(report);
-                            }
+                    let my_report = accepted_reports.get(&(my_peer_id, reliable_message.message_id.clone())).unwrap();
+                    let my_report_peers = my_report.peers.clone();
+    
+                    let mut to_remove = Vec::new();
+    
+                    // Check if any of the waitlisted reports are a subset of my report
+                    for (peer_id, report) in waitlisted_reports.iter() {
+                        if peer_id.1 != reliable_message.message_id {
+                            continue;
                         }
-
-                        let mut report_map = HashMap::new();
-                        report_map.insert(message_id.clone(), report_list);
-
-                        let super_report = SuperReport(report_map);
-                        super_reports.insert((my_peer_id, message_id.clone()), super_report.clone());
-
-                        let super_report = Message::VMessage(VMessage::SuperReport(super_report, rand_chacha.next_u64()));
-                        let serialized_message = serde_json::to_string(&super_report).unwrap();
-                        let result = client.gossip_publish(topic, serialized_message.into_bytes()).await;
-
-                        super_report_tracker.insert((my_peer_id, message_id.clone()));
-
-
-                        println!("Published super report: {:?}", result);
+                        let report_peers = report.peers.clone();
+    
+                        let report_peers: HashSet<String> = report_peers.iter().cloned().collect();
+                        let my_report_peers: HashSet<String> = my_report_peers.iter().cloned().collect();
+    
+                        if report_peers.is_subset(&my_report_peers) {
+                            accepted_reports.insert(peer_id.clone(), report.clone());
+                            to_remove.push(peer_id.clone());
+                        }
+                    }
+    
+                    for peer_id in to_remove {
+                        waitlisted_reports.remove(&peer_id);
+                    }
+    
+                    // Get the number of reports for each message id
+                    let mut report_count: HashMap<String, usize> = HashMap::new();
+                    for (_peer_id, message_id) in accepted_reports.keys() {
+                        let count = report_count.entry(message_id.clone()).or_insert(0);
+                        *count += 1;
+                    }
+    
+                    for (message_id, count) in report_count.iter() {
+                        if 2.0/3.0 < (*count as f64 / total_peers as f64) && !super_report_tracker.contains(&(my_peer_id,message_id.clone())) {
+    
+                            // Iterate through the accepted reports and add the peers to the super report
+                            let mut report_list = Vec::new();
+    
+                            for (peer_id, report) in accepted_reports.iter() {
+                                if &report.message_id == message_id {
+                                    let report = Report {
+                                        message_owner: report.message_owner.to_string(),
+                                        message_id: peer_id.1.to_string(),
+                                        data: report.data.to_string(),
+                                        peers: report.peers.iter().map(|p| p.to_string()).collect(),
+                                    };
+                                    report_list.push(report);
+                                }
+                            }
+    
+                            let mut report_map = HashMap::new();
+                            report_map.insert(message_id.clone(), report_list);
+    
+                            let super_report = SuperReport(report_map);
+                            super_reports.insert((my_peer_id, message_id.clone()), super_report.clone());
+    
+                            let super_report = Message::VMessage(VMessage::SuperReport(super_report, rand_chacha.next_u64()));
+                            let serialized_message = serde_json::to_string(&super_report).unwrap();
+                            let result = client.gossip_publish(topic, serialized_message.into_bytes()).await;
+    
+                            super_report_tracker.insert((my_peer_id, message_id.clone()));
+    
+                            println!("Published super report: {:?}", result);
+                            
+                        }
                         return PublishResult::Published(result);
-                        
                     }
                 }
             }
 
+
+            
+            
         } else {
             println!("----Received 0 acks for message: {:?}", reliable_message.message_id);
             let mut peers: HashSet<PeerId> = HashSet::new();
-            peers.insert(my_peer_id);
+            // peers.insert(my_peer_id);
             peers.insert(source.unwrap());
             echo_tracker.insert(reliable_message.message_id.clone());
             messages.insert(reliable_message, peers);
@@ -982,6 +1011,8 @@ impl VabaBroadcast {
         peer_id: PeerId,
         my_peer_id: PeerId, 
         topic: String,
+        messages: &mut HashMap<ReliableMessage, HashSet<PeerId>>,
+        report_echo_tracker: &mut HashSet<(PeerId, String)>,
         waitlisted_reports: &mut HashMap<(PeerId, String), Report>,
         accepted_reports: &mut HashMap<(PeerId, String), Report>,
         super_report_tracker: &mut HashSet<(PeerId, String)>,
@@ -991,22 +1022,84 @@ impl VabaBroadcast {
         client: &mut Client
     ) -> PublishResult{
         
-        // If I haven't seen this report, add the incoming report echo to the report echo tracker
-        if !report_echoes.contains_key( &(peer_id, report.message_id.clone())) {
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+
+        // If I haven't seen this report, add the incoming report 
+        if !report_echoes.contains_key(&(peer_id, report.message_id.clone())) {
+
             let mut peers = HashSet::new();
             peers.insert(peer_id);
             report_echoes.insert((peer_id, report.message_id.clone()), peers);
 
-            // Publish the report echo
-            let report_echo = Message::WMessage(WMessage::ReportEcho(peer_id.to_string(), report.clone(), rand_chacha.next_u64()));
-            let serialized_message = serde_json::to_string(&report_echo).unwrap();
-            let result = client.gossip_publish(topic.clone(), serialized_message.into_bytes()).await;
+            if !report_echo_tracker.contains(&(peer_id, report.message_id.clone())) {
+                let report_echo = Message::WMessage(WMessage::ReportEcho(peer_id.to_string(), report.clone(), rand_chacha.next_u64())); 
+                let serialized_message = serde_json::to_string(&report_echo).unwrap();
+                let _result = client.gossip_publish(topic.clone(), serialized_message.into_bytes()).await;
+            }
+        }
+        else {            
+            // Add this report to the report_echoes
+            report_echoes.get_mut(&(peer_id, report.message_id.clone())).unwrap().insert(peer_id);
 
-            println!("Published report echo: {:?}", result);
+            // Trust the report if it has been echoed by 1/3 of the peers
+            if (report_echoes.get(&(peer_id, report.message_id.clone())).unwrap().len() as f64 / total_peers) > 1.0/3.0 {
+
+                // Get my own report
+                let my_report = accepted_reports.get(&(my_peer_id, report.message_id.clone()));
+
+                // Currently I haven't created my own report
+                if my_report.is_none() {
+
+                    // Update my OG tracker with the new report
+                    let peers = messages.get(&ReliableMessage { source: report.message_owner.clone(), message_id: report.message_id.clone(), data: report.data.clone() });
+                    if peers.is_none() {
+
+                        // Create the peers with incoming report's peers
+                        let reliable_message = ReliableMessage {
+                            source: report.message_owner.to_string(),
+                            message_id: report.message_id.to_string(),
+                            data: report.data.to_string(),
+                        };
+                        
+                        // Insert the reliable message
+                        messages.insert(reliable_message, report.peers.iter().map(|p| p.parse().unwrap()).collect());
+                        
+                        // Update accepted reports
+                        accepted_reports.insert((my_peer_id, report.message_id.clone()), report.clone());
+
+                    } else {
+                        // Get the incoming report's peers
+                        let incoming_report_peers: HashSet<PeerId> = report.peers.iter().map(|p| p.parse().unwrap()).collect();
+                        
+                        // Insert every peer into the my own peer list
+                        for peer in incoming_report_peers {
+                            messages.get_mut(&ReliableMessage { source: report.message_owner.clone(), message_id: report.message_id.clone(), data: report.data.clone() }).unwrap().insert(peer);
+                        }
+                    }
+
+                    // Publish my report
+                    let report = Message::WMessage(WMessage::Report(report.clone(), rand_chacha.next_u64()));
+                    let serialized_message = serde_json::to_string(&report).unwrap();
+                    let result = client.gossip_publish(topic.clone(), serialized_message.into_bytes()).await;
+                } else {
+                    // Add the reports peers to my own report
+                    let incoming_report_peers: HashSet<PeerId> = report.peers.iter().map(|p| p.parse().unwrap()).collect();
+                    
+                    // Insert every peer into the my own peer list
+                    for peer in incoming_report_peers {
+                        messages.get_mut(&ReliableMessage { source: report.message_owner.clone(), message_id: report.message_id.clone(), data: report.data.clone() }).unwrap().insert(peer);
+                        if !accepted_reports.get(&(my_peer_id, report.message_id.clone())).unwrap().peers.contains(&peer.to_string()) {
+        
+                            let report = accepted_reports.get_mut(&(my_peer_id, report.message_id.clone())).unwrap();
+                            // Update the peers of the accepted report
+                            report.peers.push(peer.to_string());
+                        }
+                    }
+                }
+            }
         }
 
         let incoming_report_peers: HashSet<PeerId> = report.peers.iter().map(|p| p.parse().unwrap()).collect();
-
         println!("Received a report message: {:?}", report.message_id);
 
         // Get my report
@@ -1020,7 +1113,6 @@ impl VabaBroadcast {
         }
 
         let my_report = my_report.unwrap();
-        let my_report_peers = my_report.peers.clone();
 
         // Check if the incoming report was heard before
         if accepted_reports.contains_key(&(peer_id, report.message_id.clone())) || waitlisted_reports.contains_key(&(peer_id, my_report.message_id.clone())){
@@ -1030,7 +1122,7 @@ impl VabaBroadcast {
         let my_report_peers: HashSet<PeerId> = my_report.peers.iter().map(|p: &String| p.parse().unwrap()).collect();
 
         // Check if the the incoming report should be accepted
-        if incoming_report_peers.is_subset(&my_report_peers) {                
+        if incoming_report_peers.is_subset(&my_report_peers) {  
             accepted_reports.insert((peer_id, my_report.message_id.clone()), report);
         } else {
             waitlisted_reports.insert((peer_id, my_report.message_id.clone()), report);
@@ -1108,7 +1200,7 @@ impl VabaBroadcast {
             report_echoes.insert((report_owner, echoed_report.message_id.clone()), peers);
 
             return PublishResult::Idle;
-        } 
+        }
 
         // Add the source to the echoed reports
         report_echoes.get_mut(&(report_owner, echoed_report.message_id.clone())).unwrap().insert(source);
@@ -1132,44 +1224,22 @@ impl VabaBroadcast {
                     );
 
                     return PublishResult::Idle;
+                } 
+
+                let my_report = my_report.unwrap();
+                let my_report_peers: HashSet<PeerId> = my_report.peers.iter().map(|p| p.parse().unwrap()).collect();
+
+                // Check if the echoed report should be accepted or waitlisted
+                if report_echoes.get(&(report_owner, echoed_report.message_id.clone())).unwrap().is_subset(&my_report_peers) {
+                    accepted_reports.insert(
+                        (report_owner, echoed_report.message_id.clone()), 
+                        echoed_report.clone()
+                    );
                 } else {
-
-                    let my_report = my_report.unwrap();
-                    // let my_report_peers = my_report.peers.clone();
-
-                    let my_report_peers: HashSet<PeerId> = my_report.peers.iter().map(|p| p.parse().unwrap()).collect();
-
-                    // Check if the echoed report should be accepted
-                    if report_echoes.get(&(report_owner, echoed_report.message_id.clone())).unwrap().is_subset(&my_report_peers) {
-                        accepted_reports.insert(
-                            (report_owner, echoed_report.message_id.clone()), 
-                            echoed_report.clone()
-                        );
-                    } else {
-
-                        waitlisted_reports.insert(
-                            (report_owner, echoed_report.message_id.clone()), 
-                            echoed_report.clone()
-                        );
-                        
-                        // Check if the report can be accepted
-                        let mut to_remove = Vec::new();
-                        for (peer_id, report) in waitlisted_reports.iter() {
-                            if peer_id.1 != report.message_owner {
-                                continue;
-                            }
-
-
-
-                            // let report_peers = report.peers.clone();
-                            let report_peers: HashSet<PeerId> = report.peers.iter().map(|p| p.parse().unwrap()).collect();
-
-                            if report_peers.is_subset(&report_echoes.get(&(report_owner, echoed_report.message_id.clone())).unwrap()) {
-                                accepted_reports.insert(peer_id.clone(), report.clone());
-                                to_remove.push(peer_id.clone());
-                            }
-                        }
-                    }
+                    waitlisted_reports.insert(
+                        (report_owner, echoed_report.message_id.clone()), 
+                        echoed_report.clone()
+                    );   
                 }
             }
 
@@ -1241,7 +1311,7 @@ impl VabaBroadcast {
 
         // Check if there is a message in super_reports that has been accepted by 2/3 of the peers
         let mut report_count: HashMap<String, usize> = HashMap::new();
-        for (peer_id, cur_super_report) in super_reports.iter() {
+        for (peer_id, _cur_super_report) in super_reports.iter() {
             if peer_id.1 != message_id {
                 continue;
             }
@@ -1249,15 +1319,13 @@ impl VabaBroadcast {
             *count += 1;
         }
 
-        println!("Report count: {:?}", report_count);
-
         for (message_id, count) in report_count.iter() {
             if 2.0/3.0 < (*count as f64 / total_peers) && !ultra_reports.contains_key(&(my_peer_id, message_id.clone())) {
                 println!("----Received 2/3 super reports for message: {:?}", message_id);
 
                 // Iterate through the super reports and add the peers to the ultra report
                 let mut super_report_list = Vec::new();
-                for (peer_id, super_report) in super_reports.iter() {
+                for (_peer_id, super_report) in super_reports.iter() {
                     if super_report.0.contains_key(&message_id.to_string()) {
                         super_report_list.push(super_report.clone());
                     }
@@ -1293,7 +1361,6 @@ impl VabaBroadcast {
         // If I haven't seen the ultra report, add it to the ultra reports
         if !ultra_reports.contains_key(&(source, ultra_report.0.keys().next().unwrap().clone())) {
             ultra_reports.insert((source, ultra_report.0.keys().next().unwrap().clone()), ultra_report);
-            return PublishResult::Idle;
         }
 
         PublishResult::Idle

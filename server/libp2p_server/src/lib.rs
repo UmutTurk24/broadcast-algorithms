@@ -1,7 +1,7 @@
 use client::ComposedBehaviour;
 use client::EventLoop;
 
-use futures::{future::Either, prelude::*, select};
+use futures::future::Either;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade;
@@ -9,7 +9,6 @@ use libp2p::gossipsub;
 use libp2p::kad::store::MemoryStore;
 use libp2p::quic;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
 use tokio::time::Duration;
 
 use libp2p::{identity, PeerId, tcp, Transport, StreamProtocol, yamux, noise, Multiaddr, mdns};
@@ -23,7 +22,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 pub mod client;
-use client::{Client, Event};
+use client::Client;
 pub mod behaviour;
 pub mod poly_commit;
 
