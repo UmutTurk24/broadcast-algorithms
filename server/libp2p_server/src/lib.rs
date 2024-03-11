@@ -165,16 +165,26 @@ impl P2PServer {
         client.start_listening("/ip4/0.0.0.0/udp/0/quic-v1".parse()?).await.expect("Failed to start listening");
 
         // If bootstrap nodes were provided, connect to them
-        if let Some(bootstrap_nodes) = bootstrap_nodes {
-            let file = tokio::fs::read_to_string(bootstrap_nodes).await.expect("Failed to read bootstrap nodes file");
-            let lines = file.lines();
-            for line in lines {
-                let parts: Vec<&str> = line.split(" ").collect();
-                let (peer_addr, peer_id) = (parts[0], parts[1]);
+        // if bootstrap_nodes.is_some() {
+        //     let file = tokio::fs::read_to_string(bootstrap_nodes.unwrap()).await.expect("Failed to read bootstrap nodes file");
+        //     let lines = file.lines();
+        //     for line in lines {
+        //         let parts: Vec<&str> = line.split(" ").collect();
+        //         let (peer_addr, peer_id) = (parts[0], parts[1]);
                 
-                client.kd_add_address(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
-            }
-        }
+        //         client.kd_add_address(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
+        //     }
+        // }
+        // if let Some(bootstrap_nodes) = bootstrap_nodes {
+        //     let file = tokio::fs::read_to_string(bootstrap_nodes).await.expect("Failed to read bootstrap nodes file");
+        //     let lines = file.lines();
+        //     for line in lines {
+        //         let parts: Vec<&str> = line.split(" ").collect();
+        //         let (peer_addr, peer_id) = (parts[0], parts[1]);
+                
+        //         client.kd_add_address(peer_id.parse()?, peer_addr.parse()?).await.expect("Failed to bootstrap to peer");
+        //     }
+        // }
 
         // ==================================================
         // =============  BEHAVIOUR SELECTION   =============
