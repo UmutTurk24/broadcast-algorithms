@@ -5,6 +5,7 @@ use tokio_stream::StreamExt;
 use tokio::sync::oneshot;
 use tokio::sync::mpsc;
 use tokio::macros::support::{Future, Pin};
+use tokio::time::timeout;
 
 use libp2p::multiaddr::Protocol;
 use libp2p::{PeerId, Multiaddr, Swarm, mdns, gossipsub};
@@ -16,6 +17,7 @@ use void::Void;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Client {
@@ -207,13 +209,32 @@ impl Client {
     */
 
     pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) -> Result<gossipsub::MessageId, gossipsub::PublishError> {
-        let (one_sender, one_receiver) = oneshot::channel();
+        let mut counter = 0;
+        while true {
+            let (one_sender, mut one_receiver) = oneshot::channel();
 
-        self.sender
-            .send(Command::GossipPublish { topic, message, one_sender })
-            .await
-            .expect("Command receiver not to be dropped.");
-        one_receiver.await.expect("Receiver has not responded to GossipPublish command")
+            self.sender
+                .send(Command::GossipPublish { topic: topic.clone(), message: message.clone(), one_sender })
+                .await
+                .expect("Command receiver not to be dropped.");
+            
+            let result = timeout(Duration::from_millis(10), one_receiver).await;
+            
+            match result {
+                Ok(gossip_result) =>  {
+                    println!("Received response: {:?}", gossip_result);
+                    return gossip_result.unwrap();
+                },
+                Err(send_err) => {
+                    counter += 1;
+                    if counter > 5 {
+                        return Ok(gossipsub::MessageId::new(&[2]));
+                    }
+                },
+            } 
+        }
+        
+        return Ok(gossipsub::MessageId::new(&[2]));
     }
 
     pub async fn gossip_subscribe(&mut self, topic: String) {
@@ -286,8 +307,15 @@ impl EventLoop {
             tokio::select! {
                 event = self.swarm.next() => self.handle_event(event.expect("Swarm stream to be infinite.")).await,
                 command = self.command_receiver.recv() => match command {
-                    Some(c) => self.handle_command(c).await,
-                    None => return,
+                    Some(c) => {
+                        // println!("Received command: {:?}", c);
+                        self.handle_command(c).await
+
+                    },
+                    None => {
+                        println!("Command receiver dropped. Exiting event loop.");
+                        break;
+                    },
                 },
             }
         }
@@ -395,7 +423,6 @@ impl EventLoop {
                     mdns::Event::Discovered(list) => {
                         
                         for (peer_id, multiaddr) in list {
-                            // println!("Discovered {:?} with address {}", peer_id, multiaddr);
 
                             // Dial the discovered peer if not dialed before
                             let dial_result = self.swarm.dial(multiaddr.clone().with(Protocol::P2p(peer_id)));
@@ -540,10 +567,12 @@ impl EventLoop {
                     .put_record(record, quorum.unwrap());
             },
             Command::GossipPublish { topic, message, one_sender } => {
+                println!("Publishing message: {:?}", String::from_utf8_lossy(&message));
                 let message_id = self.swarm
                     .behaviour_mut()
                     .gossipsub
                     .publish(gossipsub::IdentTopic::new(topic), message);
+                println!("Published message with id: {:?}", message_id);
                 one_sender.send(message_id);
             },
             Command::GossipSubscribe { topic } => {
@@ -576,7 +605,6 @@ impl EventLoop {
                 }
                 one_sender.send(peer_list);
             }
-
         }
     }
 }
