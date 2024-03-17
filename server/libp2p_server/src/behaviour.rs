@@ -840,6 +840,7 @@ impl VabaBroadcast {
         }
     }
 
+
     async fn handle_message(
         messages: &mut HashMap<ReliableMessage, HashSet<PeerId>>,
         data: String, 
@@ -884,8 +885,9 @@ impl VabaBroadcast {
             print!("Published echo for the first time hearing it: {:?}", _result);
         }
         
-        // let total_peers = client.gossip_all_peers().await.len() as f64;
-        let total_peers = 20 as f64;
+        
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+        // let total_peers = 4 as f64;
 
         // Check if RB has reached 2t/3, if yes publish a report, and check to see if report published before
         if total_peers * 2.0/3.0 < messages.get(&reliable_message).unwrap().len() as f64 && !report_tracker.contains(&(my_peer_id, reliable_message.message_id.clone())){
@@ -1054,8 +1056,8 @@ impl VabaBroadcast {
         // A is my_peer_id, B is pid in RB, C is source
 
         let source = source.unwrap();
-        // let total_peers = client.gossip_all_peers().await.len() as f64;
-        let total_peers = 20 as f64;
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+        // let total_peers = 4 as f64;
 
         // Add the echo to the echo_list (RB,C -> Peers)
             // Add C to the echo_list
@@ -1081,14 +1083,15 @@ impl VabaBroadcast {
             println!("Published ack for incoming echo: {:?}", result);
         }
 
-        // Add this echo to the messages list with C 
-        // Create an RB in messages list if it does not exist
-        if messages.contains_key(&reliable_message) {
-            messages.get_mut(&reliable_message).unwrap().insert(source);
-        } else {
-            let mut peers: HashSet<PeerId> = HashSet::new();
-            peers.insert(source);
-            messages.insert(reliable_message.clone(), peers);
+        // If this echo has been confirmed by 2t/3 other nodes, then add the message owner (B) to the list
+        if echo_messages.get(&(reliable_message.clone(), source)).unwrap().len() as f64 > total_peers * 2.0/3.0 {
+            if messages.contains_key(&reliable_message) {
+                messages.get_mut(&reliable_message).unwrap().insert(source);
+            } else {
+                let mut peers: HashSet<PeerId> = HashSet::new();
+                peers.insert(source);
+                messages.insert(reliable_message.clone(), peers);
+            }
         }
 
         // If messages has t/3 peers, then add the message owner (B) to the list
@@ -1276,8 +1279,8 @@ impl VabaBroadcast {
         // A is my_peer_id, B is pid in RB, C is source, D is echo_owner
 
         let source = source.unwrap();
-        // let total_peers = client.gossip_all_peers().await.len() as f64;
-        let total_peers = 20 as f64;
+        let total_peers = client.gossip_all_peers().await.len() as f64;
+        // let total_peers = 4 as f64;
 
         // Add the echo to the echo_list (RB,C -> Peers)
             // Add C to the echo_list
@@ -1290,20 +1293,21 @@ impl VabaBroadcast {
         }
 
 
-        // If this list has t+1 peers in it, add me (A) and the echo owner (D) to the list 
+        // If this list has t+1 peers in it, add the echo owner (D) to the list 
         if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 1.0/3.0 {
             echo_messages.get_mut(&(reliable_message.clone(), echo_owner)).unwrap().insert(echo_owner);
 
+        }
+
+        if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 2.0/3.0 {
             if messages.contains_key(&reliable_message) {
-                messages.get_mut(&reliable_message).unwrap().insert(echo_owner);
+                messages.get_mut(&reliable_message).unwrap().insert(source);
             } else {
                 let mut peers: HashSet<PeerId> = HashSet::new();
-                peers.insert(echo_owner);
+                peers.insert(source);
                 messages.insert(reliable_message.clone(), peers);
             }
         }
-
-
 
         // If this list has t+1 peers in it, and I haven't send an ack before, sent it
         if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 1.0/3.0 &&
@@ -1515,8 +1519,8 @@ impl VabaBroadcast {
         // Check if I have received 2t/3 reports for this message
             // If yes, publish a super report
             // update the super report tracker
-        // let total_peers = client.gossip_all_peers().await.len();
-        let total_peers = 20 as f64;
+        let total_peers = client.gossip_all_peers().await.len();
+        // let total_peers = 4 as f64;
 
         let reliable_message = ReliableMessage {
             source: report.message_owner.to_string(),
@@ -1624,8 +1628,8 @@ impl VabaBroadcast {
         // Check if I have received 2t/3 super reports for this message
             // If yes, publish a ultra report
             // update the ultra report tracker
-        // let total_peers = client.gossip_all_peers().await.len();
-        let total_peers = 20 as f64;
+        let total_peers = client.gossip_all_peers().await.len();
+        // let total_peers = 4 as f64;
 
         let mut report_count: HashMap<String, usize> = HashMap::new();
 

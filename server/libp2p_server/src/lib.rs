@@ -148,7 +148,7 @@ impl P2PServer {
 
         // Build the swarm for the server
         let swarm = SwarmBuilder::with_tokio_executor(transport, self_behaviour, peer_id).build();
-    
+        
         // Create channels for sending commands and receiving events
         let (command_sender, command_receiver) = mpsc::channel(32);
         let (event_sender, event_receiver) = mpsc::channel(32);

@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 use tokio::sync::mpsc;
 use tokio::macros::support::{Future, Pin};
 use tokio::time::timeout;
+use tokio::time::{sleep, Duration};
 
 use libp2p::multiaddr::Protocol;
 use libp2p::{PeerId, Multiaddr, Swarm, mdns, gossipsub};
@@ -17,7 +18,6 @@ use void::Void;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
-use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Client {
@@ -107,7 +107,7 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `self` - The `Client` to get the list of peers from.
+    /// * `self` - The `Client` to get the list of peers from
     ///
     /// # Returns
     ///
@@ -209,32 +209,22 @@ impl Client {
     */
 
     pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) -> Result<gossipsub::MessageId, gossipsub::PublishError> {
-        let mut counter = 0;
-        while true {
-            let (one_sender, mut one_receiver) = oneshot::channel();
 
-            self.sender
-                .send(Command::GossipPublish { topic: topic.clone(), message: message.clone(), one_sender })
-                .await
-                .expect("Command receiver not to be dropped.");
-            
-            let result = timeout(Duration::from_millis(10), one_receiver).await;
-            
-            match result {
-                Ok(gossip_result) =>  {
-                    println!("Received response: {:?}", gossip_result);
-                    return gossip_result.unwrap();
-                },
-                Err(send_err) => {
-                    counter += 1;
-                    if counter > 5 {
-                        return Ok(gossipsub::MessageId::new(&[2]));
-                    }
-                },
-            } 
-        }
+
+        sleep(Duration::from_millis(10)).await;
+
+        let (one_sender, mut one_receiver) = oneshot::channel();
+
+        self.sender
+            .send(Command::GossipPublish { topic: topic.clone(), message: message.clone(), one_sender })
+            .await
+            .expect("Command receiver not to be dropped.");
+
+        one_receiver.await.expect("Receiver has not responded!")
+
+
         
-        return Ok(gossipsub::MessageId::new(&[2]));
+
     }
 
     pub async fn gossip_subscribe(&mut self, topic: String) {
@@ -245,6 +235,7 @@ impl Client {
     }
 
     pub async fn gossip_all_peers(&mut self) -> HashSet<(PeerId)> {
+        sleep(Duration::from_millis(10)).await;
         let (one_sender, one_receiver) = oneshot::channel();
         self.sender
             .send(Command::GossipAllPeers{ one_sender})
@@ -270,7 +261,6 @@ pub struct EventLoop {
     command_receiver: mpsc::Receiver<Command>,
     event_sender: mpsc::Sender<Event>,
     pending_requests: HashMap<RequestId, oneshot::Sender<Result<Vec<u8>, Box<dyn Error + Send>>>>,
-    pending_behaviour_requests: HashMap<QueryId, oneshot::Sender<HashSet<PeerId>>>,
 }
 #[allow(unused)]
 impl EventLoop {
@@ -293,7 +283,6 @@ impl EventLoop {
             command_receiver,
             event_sender,
             pending_requests: Default::default(),
-            pending_behaviour_requests: Default::default(),
         }
     }
 
@@ -308,7 +297,6 @@ impl EventLoop {
                 event = self.swarm.next() => self.handle_event(event.expect("Swarm stream to be infinite.")).await,
                 command = self.command_receiver.recv() => match command {
                     Some(c) => {
-                        // println!("Received command: {:?}", c);
                         self.handle_command(c).await
 
                     },
