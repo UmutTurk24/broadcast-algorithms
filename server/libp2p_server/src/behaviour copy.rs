@@ -803,7 +803,7 @@ impl VabaBroadcast {
                                         RBMessage::MessageEcho(reliable_message, _rand) => {
                                             let _result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
                                         },
-                                        RBMessage::AckEcho(reliable_message, echo_owner, _rand) => {
+                                        RBMessage::Ack(reliable_message, echo_owner, _rand) => {
                                             let _result = Self::handle_acks(reliable_message, source, echo_owner.parse().unwrap(), my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
                                         }
                                     }
@@ -1080,7 +1080,7 @@ impl VabaBroadcast {
         if !ack_tracker.contains(&(reliable_message.clone(), source)) {
             ack_tracker.insert((reliable_message.clone(), source));
 
-            let ack = Message::RBMessage(RBMessage::AckEcho(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
+            let ack = Message::RBMessage(RBMessage::Ack(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&ack).unwrap();
             let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
             println!("Published ack for incoming echo: {:?}", result);
@@ -1307,7 +1307,7 @@ impl VabaBroadcast {
             !ack_tracker.contains(&(reliable_message.clone(), source)) {
             ack_tracker.insert((reliable_message.clone(), source));
 
-            let ack = Message::RBMessage(RBMessage::AckEcho(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
+            let ack = Message::RBMessage(RBMessage::Ack(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&ack).unwrap();
             let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
             println!("Published ack for incoming echo: {:?}", result);

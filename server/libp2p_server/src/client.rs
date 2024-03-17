@@ -211,19 +211,21 @@ impl Client {
     pub async fn gossip_publish(&mut self, topic: String, message: Vec<u8>) -> Result<gossipsub::MessageId, gossipsub::PublishError> {
 
 
-        sleep(Duration::from_millis(10)).await;
+        // sleep(Duration::from_millis(20)).await;
 
         let (one_sender, mut one_receiver) = oneshot::channel();
 
-        self.sender
+        let res = self.sender
             .send(Command::GossipPublish { topic: topic.clone(), message: message.clone(), one_sender })
-            .await
-            .expect("Command receiver not to be dropped.");
+            .await;
+            // .expect("Command receiver not to be dropped.");
+
+        if res.is_err() {
+            println!("Failed to send command");
+            panic!("Failed to send command");
+        }
 
         one_receiver.await.expect("Receiver has not responded!")
-
-
-        
 
     }
 
@@ -235,18 +237,23 @@ impl Client {
     }
 
     pub async fn gossip_all_peers(&mut self) -> HashSet<(PeerId)> {
-        sleep(Duration::from_millis(10)).await;
+        // sleep(Duration::from_millis(20)).await;
         let (one_sender, one_receiver) = oneshot::channel();
-        self.sender
+        let res = self.sender
             .send(Command::GossipAllPeers{ one_sender})
-            .await
-            .expect("Command receiver not to be dropped.");
+            .await;
+            // .expect("Command receiver not to be dropped.");
+
+        if res.is_err() {
+            println!("Failed to send command");
+            panic!("Failed to send command");
+        }
         one_receiver.await.expect("Receiver has not responded to GossipAllPeers command")
     }
 
     pub async fn gossip_mesh(&mut self, topic: String) -> HashSet<PeerId> {
         let (one_sender, one_receiver) = oneshot::channel();
-        self.sender
+        let res = self.sender
             .send(Command::GossipMesh{ topic, one_sender })
             .await
             .expect("Command receiver not to be dropped.");
@@ -555,7 +562,7 @@ impl EventLoop {
                     .put_record(record, quorum.unwrap());
             },
             Command::GossipPublish { topic, message, one_sender } => {
-                println!("Publishing message: {:?}", String::from_utf8_lossy(&message));
+;
                 let message_id = self.swarm
                     .behaviour_mut()
                     .gossipsub

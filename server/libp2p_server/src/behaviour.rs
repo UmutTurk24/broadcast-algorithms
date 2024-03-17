@@ -692,6 +692,7 @@ impl VabaBroadcast {
         let mut ack_tracker: HashSet<(ReliableMessage, PeerId)> = HashSet::new(); // (Peer,MessageId), Set of acks that has been published
         let mut report_tracker: HashSet<(PeerId, String)> = HashSet::new(); // (Peer,MessageId), Set of reports that has been published
         let mut echo_messages: HashMap<(ReliableMessage, PeerId), HashSet<PeerId>> = HashMap::new(); // Original Message Sender ID, Message ID -> Set of peers who echoed the message
+        let mut ack_echo_tracker: HashSet<(ReliableMessage, PeerId)> = HashSet::new(); // (Peer,MessageId), Set of acks that has been echoed
         
         // VABA Broadcast
         let mut super_reports: HashMap<(PeerId, String), SuperReport> = HashMap::new(); // Map of accepted super reports
@@ -758,7 +759,7 @@ impl VabaBroadcast {
                         },
                         ["gossip-peers"] => {
                             let gossip_peers = client.gossip_all_peers().await;
-                            println!("Gossip peers: {:?}", gossip_peers);
+                            println!("Gossip peers: {:?}", gossip_peers.len());
                         },
                         ["gossip-mesh", topic] => {
                             let gossip_mesh = client.gossip_mesh(topic.to_string()).await;
@@ -802,9 +803,10 @@ impl VabaBroadcast {
                                         RBMessage::MessageEcho(reliable_message, _rand) => {
                                             let _result = Self::handle_echo(source, reliable_message, my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
                                         },
-                                        RBMessage::AckEcho(reliable_message, echo_owner, _rand) => {
+                                        RBMessage::Ack(reliable_message, echo_owner, _rand) => {
                                             let _result = Self::handle_acks(reliable_message, source, echo_owner.parse().unwrap(), my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
-                                        }
+                                        },
+                                        _ => {},
                                     }
                                 },
                                 Message::WMessage(witness_message) => {
@@ -869,8 +871,13 @@ impl VabaBroadcast {
 
         // Add the RB into the messages, and add myself and the message owner to the list
         if messages.contains_key(&reliable_message) {
-            messages.get_mut(&reliable_message).unwrap().insert(my_peer_id);
-            messages.get_mut(&reliable_message).unwrap().insert(source.unwrap());
+            if !messages.get_mut(&reliable_message).unwrap().contains(&my_peer_id) {
+                messages.get_mut(&reliable_message).unwrap().insert(my_peer_id);
+            }
+
+            if !messages.get_mut(&reliable_message).unwrap().contains(&source.unwrap()) {
+                messages.get_mut(&reliable_message).unwrap().insert(source.unwrap());
+            }
         } else {
             let new_peers = vec![my_peer_id, source.unwrap()];
             messages.insert(reliable_message.clone(), new_peers.into_iter().collect());
@@ -887,7 +894,6 @@ impl VabaBroadcast {
         
         
         let total_peers = client.gossip_all_peers().await.len() as f64;
-        // let total_peers = 4 as f64;
 
         // Check if RB has reached 2t/3, if yes publish a report, and check to see if report published before
         if total_peers * 2.0/3.0 < messages.get(&reliable_message).unwrap().len() as f64 && !report_tracker.contains(&(my_peer_id, reliable_message.message_id.clone())){
@@ -1050,14 +1056,12 @@ impl VabaBroadcast {
         client: &mut Client) 
         -> PublishResult{
         
-        println!("Received echo for message: {:?}", reliable_message.message_id);
+        // println!("Received echo for message: {:?}", reliable_message.message_id);
 
         // I am A, and B sent RB to everyone. C sent this echo to me
         // A is my_peer_id, B is pid in RB, C is source
-
         let source = source.unwrap();
         let total_peers = client.gossip_all_peers().await.len() as f64;
-        // let total_peers = 4 as f64;
 
         // Add the echo to the echo_list (RB,C -> Peers)
             // Add C to the echo_list
@@ -1077,10 +1081,10 @@ impl VabaBroadcast {
 
             ack_tracker.insert((reliable_message.clone(), source));
 
-            let ack = Message::RBMessage(RBMessage::AckEcho(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
+            let ack = Message::RBMessage(RBMessage::Ack(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&ack).unwrap();
             let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
-            println!("Published ack for incoming echo: {:?}", result);
+            // println!("Published ack for incoming echo: {:?}", result);
         }
 
         // If this echo has been confirmed by 2t/3 other nodes, then add the message owner (B) to the list
@@ -1107,10 +1111,7 @@ impl VabaBroadcast {
             messages.contains_key(&reliable_message) {
             if messages.get(&reliable_message).unwrap().contains(&reliable_message.source.parse().unwrap()) &&
             messages.get(&reliable_message).unwrap().len() as f64 > total_peers * 2.0/3.0 {
-        // if !accepted_reports.contains_key(&(my_peer_id, reliable_message.message_id.clone())) && 
-        //     messages.contains_key(&reliable_message) &&
-        //     messages.get(&reliable_message).unwrap().contains(&reliable_message.source.parse().unwrap()) &&
-        //     messages.get(&reliable_message).unwrap().len() as f64 > total_peers * 2.0/3.0 {
+
 
             let report = Report {
                 message_owner: reliable_message.source.to_string(),
@@ -1273,14 +1274,13 @@ impl VabaBroadcast {
         client: &mut Client) 
         -> PublishResult{
 
-        println!("Received ack for echo: {:?}", reliable_message);
+        // println!("Received ack for echo: {:?}", reliable_message);
         
         // I am A, and B sent RB to everyone. C sent this ack to me about D
         // A is my_peer_id, B is pid in RB, C is source, D is echo_owner
 
         let source = source.unwrap();
         let total_peers = client.gossip_all_peers().await.len() as f64;
-        // let total_peers = 4 as f64;
 
         // Add the echo to the echo_list (RB,C -> Peers)
             // Add C to the echo_list
@@ -1292,19 +1292,17 @@ impl VabaBroadcast {
             echo_messages.insert((reliable_message.clone(), echo_owner), peers);
         }
 
-
         // If this list has t+1 peers in it, add the echo owner (D) to the list 
         if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 1.0/3.0 {
             echo_messages.get_mut(&(reliable_message.clone(), echo_owner)).unwrap().insert(echo_owner);
-
         }
 
         if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 2.0/3.0 {
             if messages.contains_key(&reliable_message) {
-                messages.get_mut(&reliable_message).unwrap().insert(source);
+                messages.get_mut(&reliable_message).unwrap().insert(echo_owner);
             } else {
                 let mut peers: HashSet<PeerId> = HashSet::new();
-                peers.insert(source);
+                peers.insert(echo_owner);
                 messages.insert(reliable_message.clone(), peers);
             }
         }
@@ -1312,11 +1310,10 @@ impl VabaBroadcast {
         // If this list has t+1 peers in it, and I haven't send an ack before, sent it
         if echo_messages.get(&(reliable_message.clone(), echo_owner)).unwrap().len() as f64 > total_peers * 1.0/3.0 &&
             !ack_tracker.contains(&(reliable_message.clone(), source)) {
-
             
             ack_tracker.insert((reliable_message.clone(), source));
 
-            let ack = Message::RBMessage(RBMessage::AckEcho(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
+            let ack = Message::RBMessage(RBMessage::Ack(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&ack).unwrap();
             let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
             println!("Published ack for incoming echo: {:?}", result);
@@ -1479,6 +1476,14 @@ impl VabaBroadcast {
         PublishResult::Idle
     }
 
+// source, echo_owner.parse().unwrap(), my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
+    // async fn handle_ack_echo(
+    //     ack_echo: 
+
+    // ) -> PublishResult {
+    //     PublishResult::Idle
+    // }
+
     async fn handle_report(
         report: Report,
         peer_id: PeerId,
@@ -1500,8 +1505,8 @@ impl VabaBroadcast {
         }
         // If I have a report for this message
             // Check if the incoming report needs to be accepted
-        if accepted_reports.contains_key(&(peer_id, report.message_id.clone())) {
-            let my_report = accepted_reports.get(&(peer_id, report.message_id.clone())).unwrap();
+        if accepted_reports.contains_key(&(my_peer_id, report.message_id.clone())) {
+            let my_report = accepted_reports.get(&(my_peer_id, report.message_id.clone())).unwrap();
             let my_report_peers = my_report.peers.clone();
 
             let report_peers = report.peers.clone();
@@ -1532,7 +1537,7 @@ impl VabaBroadcast {
 
             let mut report_count: HashMap<String, usize> = HashMap::new();
             for (_peer_id, message_id) in accepted_reports.keys() {
-                let count = report_count.entry(message_id.clone()).or_insert(0);
+                let count: &mut usize = report_count.entry(message_id.clone()).or_insert(0);
                 *count += 1;
             }
 
@@ -1629,7 +1634,6 @@ impl VabaBroadcast {
             // If yes, publish a ultra report
             // update the ultra report tracker
         let total_peers = client.gossip_all_peers().await.len();
-        // let total_peers = 4 as f64;
 
         let mut report_count: HashMap<String, usize> = HashMap::new();
 
@@ -1674,7 +1678,7 @@ impl VabaBroadcast {
         ultra_reports: &mut HashMap<(PeerId, String), UltraReport>,
     ) -> PublishResult {
 
-        println!("Received ultra report: {:?}", ultra_report.0.keys().next().unwrap());
+        println!("YAY Received ultra report: {:?}", ultra_report.0.keys().next().unwrap());
 
         // Add the ultra report to the list
         ultra_reports.insert((source, ultra_report.0.keys().next().unwrap().to_string()), ultra_report.clone());
@@ -1695,7 +1699,8 @@ enum Message {
 enum RBMessage {
     Message(String), // message
     MessageEcho(ReliableMessage, u64), // RB 
-    AckEcho(ReliableMessage, String, u64), // C said B acked A (so B), RB
+    Ack(ReliableMessage, String, u64), // C said B acked A (so B), RB
+    AckEcho(AckEcho, u64), // D (me) received ack from C about B's Echo on A's Message. RB is on A, First String is on B, Second String is on C. 
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1719,6 +1724,12 @@ struct ReliableMessage {
     source: String,
     message_id: String,
     data: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+struct AckEcho{
+    reliable_message: ReliableMessage,
+    echo_owner: String, // Echo Owner
+    ack_owner: String, // Ack Owner
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
