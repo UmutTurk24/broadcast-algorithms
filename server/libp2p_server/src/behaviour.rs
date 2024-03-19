@@ -2288,7 +2288,7 @@ impl ChillVabaBroadcast {
 
             let ack = Message::RBMessage(RBMessage::Ack(reliable_message.clone(), source.to_string(), rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&ack).unwrap();
-            let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
+            let result: Result<MessageId, PublishError> = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
         }
 
 
@@ -2315,7 +2315,6 @@ impl ChillVabaBroadcast {
             let report = Message::WMessage(WMessage::Report(report, rand_chacha.next_u64()));
             let serialized_message = serde_json::to_string(&report).unwrap();
             let result = client.gossip_publish(topic.to_string(), serialized_message.into_bytes()).await;
-
         }}
 
 
@@ -2445,14 +2444,6 @@ impl ChillVabaBroadcast {
         PublishResult::Idle
     }
 
-// source, echo_owner.parse().unwrap(), my_peer_id, topic.to_string(), &mut messages, &mut echo_messages, &mut ack_echo_tracker, &mut accepted_reports, &mut waitlisted_reports, &mut super_report_tracker, &mut super_reports, &mut waitlisted_super_reports, &mut rand_chacha, &mut client).await;
-    // async fn handle_ack_echo(
-    //     ack_echo: 
-
-    // ) -> PublishResult {
-    //     PublishResult::Idle
-    // }
-
     async fn handle_report(
         report: Report,
         peer_id: PeerId,
@@ -2493,7 +2484,6 @@ impl ChillVabaBroadcast {
             // If yes, publish a super report
             // update the super report tracker
         let total_peers = client.gossip_all_peers().await.len();
-        // let total_peers = 4 as f64;
 
         let reliable_message = ReliableMessage {
             source: report.message_owner.to_string(),

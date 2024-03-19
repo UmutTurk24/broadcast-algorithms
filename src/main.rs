@@ -7,7 +7,9 @@ use tokio::{sync::mpsc::Receiver, time::Instant};
 async fn main() -> Result<(), Box<dyn std::error::Error>> { 
 
     // Run the server
-    P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::VabaBroadcast).await?;
+    // P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::VabaBroadcast).await?;
+    // P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::ChillVabaBroadcast).await?;
+    P2PServer::initialize_server(Some("./src/bootstrap-nodes.txt".to_string()), ClientBehaviour::EvilVabaBroadcast).await?;
 
     // let mut before = Instant::now();
     // let mut counter = 0;
