@@ -95,7 +95,7 @@ impl P2PServer {
             .heartbeat_interval(Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
             .validation_mode(gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
             .message_id_fn(message_id_fn) // content-address messages. No two messages of the same content will be propagated.
-            .max_transmit_size(1048576) // maximum message size that the network will accept
+            .max_transmit_size(16777216) // maximum message size that the network will accept
             .build()
             .expect("Valid config");
 
