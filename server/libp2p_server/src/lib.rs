@@ -150,8 +150,8 @@ impl P2PServer {
         let swarm = SwarmBuilder::with_tokio_executor(transport, self_behaviour, peer_id).build();
         
         // Create channels for sending commands and receiving events
-        let (command_sender, command_receiver) = mpsc::channel(100000);
-        let (event_sender, event_receiver) = mpsc::channel(100000);
+        let (command_sender, command_receiver) = mpsc::channel(1000000);
+        let (event_sender, event_receiver) = mpsc::channel(1000000);
         
         // Create an event loop for the server and spawn it in a new task
         let event_loop = EventLoop::new(swarm, command_receiver, event_sender);
